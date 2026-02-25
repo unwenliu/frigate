@@ -2,6 +2,9 @@
 
 set -euxo pipefail
 
+# 配置 PyPI 镜像源
+pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
 mkdir -p /trt-wheels
 
 if [[ "${TARGETARCH}" == "arm64" ]]; then

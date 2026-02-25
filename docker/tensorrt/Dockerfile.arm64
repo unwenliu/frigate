@@ -11,6 +11,15 @@ FROM ${TRT_BASE} AS trt-deps
 ARG TARGETARCH
 ARG COMPUTE_LEVEL
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 RUN apt-get update \
     && apt-get install -y git build-essential cuda-nvcc-* cuda-nvtx-* libnvinfer-dev libnvinfer-plugin-dev libnvparsers-dev libnvonnxparsers-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -59,6 +68,15 @@ HEALTHCHECK --start-period=600s --start-interval=5s --interval=15s --timeout=5s 
 FROM ${BASE_IMAGE} AS build-wheels
 ARG DEBIAN_FRONTEND
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 # Add deadsnakes PPA for python3.11
 RUN apt-get -qq update && \
     apt-get -qq install -y --no-install-recommends \
@@ -77,11 +95,21 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
 RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
-    && python3 get-pip.py "pip"
+    && python3 get-pip.py "pip" \
+    && pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 FROM build-wheels AS trt-wheels
 ARG DEBIAN_FRONTEND
 ARG TARGETARCH
+
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
 
 # python-tensorrt build deps are 3.4 GB!
 RUN apt-get update \
@@ -108,6 +136,15 @@ ADD https://nvidia.box.com/shared/static/9yvw05k6u343qfnkhdv2x6xhygze0aq1.whl /t
 FROM build-wheels AS trt-model-wheels
 ARG DEBIAN_FRONTEND
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 RUN apt-get update \
     && apt-get install -y protobuf-compiler libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -124,6 +161,16 @@ RUN --mount=type=bind,source=docker/tensorrt/build_jetson_ffmpeg.sh,target=/deps
 
 # Frigate w/ TensorRT for NVIDIA Jetson platforms
 FROM tensorrt-base AS frigate-tensorrt
+
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 RUN apt-get update \
     && apt-get install -y python-is-python3 libprotobuf23  \
     && rm -rf /var/lib/apt/lists/*
@@ -133,6 +180,10 @@ ENV DEFAULT_FFMPEG_VERSION="jetson"
 ENV INCLUDED_FFMPEG_VERSIONS="${DEFAULT_FFMPEG_VERSION}:${INCLUDED_FFMPEG_VERSIONS}"
 
 # ffmpeg runtime dependencies
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 RUN apt-get -qq update \
     && apt-get -qq install -y --no-install-recommends \
     libx264-163 libx265-199 libegl1 \

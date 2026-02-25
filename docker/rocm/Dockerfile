@@ -11,6 +11,15 @@ FROM wget AS rocm
 
 ARG ROCM
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速 (Ubuntu)
+RUN sed -i 's|http://archive.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list \
+    && sed -i 's|http://security.ubuntu.com|https://mirrors.aliyun.com|g' /etc/apt/sources.list
+
 RUN apt update -qq && \
     apt install -y wget gpg && \
     wget -O rocm.deb https://repo.radeon.com/amdgpu-install/7.1.1/ubuntu/jammy/amdgpu-install_7.1.1.70101-1_all.deb && \
@@ -31,6 +40,15 @@ RUN echo /opt/rocm/lib|tee /opt/rocm-dist/etc/ld.so.conf.d/rocm.conf
 #######################################################################
 FROM deps AS deps-prelim
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速
+RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 COPY docker/rocm/debian-backports.sources /etc/apt/sources.list.d/debian-backports.sources
 RUN apt-get update && \
     apt-get install -y libnuma1 && \
@@ -46,6 +64,9 @@ RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
     && python3 get-pip.py "pip" --break-system-packages
 RUN python3 -m pip config set global.break-system-packages true
+
+# 配置 PyPI 镜像源
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 COPY docker/rocm/requirements-wheels-rocm.txt /requirements.txt
 RUN pip3 uninstall -y onnxruntime \
