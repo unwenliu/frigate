@@ -2,6 +2,10 @@
 
 set -euxo pipefail
 
+# 使用阿里云 APT 镜像源加速
+sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 NGINX_VERSION="1.27.4"
 VOD_MODULE_VERSION="1.31"
 SECURE_TOKEN_MODULE_VERSION="1.5"

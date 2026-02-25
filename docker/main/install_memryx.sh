@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# 配置 PyPI 镜像源
+pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
 # Download the MxAccl for Frigate github release
 wget https://github.com/memryx/mx_accl_frigate/archive/refs/tags/v2.1.0.zip -O /tmp/mxaccl.zip
 unzip /tmp/mxaccl.zip -d /tmp

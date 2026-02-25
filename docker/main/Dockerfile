@@ -16,14 +16,41 @@ FROM ${BASE_IMAGE} AS base
 ARG PIP_BREAK_SYSTEM_PACKAGES
 ARG BASE_HOOK
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速
+RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 RUN sh -c "$BASE_HOOK"
 
 FROM --platform=${BUILDPLATFORM} debian:12 AS base_host
 ARG PIP_BREAK_SYSTEM_PACKAGES
 
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速
+RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 FROM ${SLIM_BASE} AS slim-base
 ARG PIP_BREAK_SYSTEM_PACKAGES
 ARG BASE_HOOK
+
+# 先安装 ca-certificates 以支持 HTTPS
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 使用阿里云 APT 镜像源加速
+RUN sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources \
+    && sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
 
 RUN sh -c "$BASE_HOOK"
 
@@ -80,6 +107,7 @@ RUN apt-get -qq update \
     && wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
     && python3 get-pip.py "pip" \
+    && pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
     && pip3 install -r /requirements-ov.txt
 
 # Get OpenVino Model
@@ -180,7 +208,9 @@ RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
 COPY docker/main/requirements.txt /requirements.txt
 COPY docker/main/requirements-dev.txt /requirements-dev.txt
 
-RUN pip3 install -r /requirements.txt
+# 配置 PyPI 镜像源并安装依赖
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple \
+    && pip3 install -r /requirements.txt
 
 # Build pysqlite3 from source
 COPY docker/main/build_pysqlite3.sh /build_pysqlite3.sh
@@ -261,7 +291,8 @@ ENV INCLUDED_FFMPEG_VERSIONS="${DEFAULT_FFMPEG_VERSION}:5.0"
 
 RUN wget -q https://bootstrap.pypa.io/get-pip.py -O get-pip.py \
     && sed -i 's/args.append("setuptools")/args.append("setuptools==77.0.3")/' get-pip.py \
-    && python3 get-pip.py "pip"
+    && python3 get-pip.py "pip" \
+    && pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN --mount=type=bind,from=wheels,source=/wheels,target=/deps/wheels \
     pip3 install -U /deps/wheels/*.whl
@@ -313,6 +344,9 @@ WORKDIR /workspace/frigate
 RUN apt-get update \
     && apt-get install make -y \
     && rm -rf /var/lib/apt/lists/*
+
+# 配置 PyPI 镜像源
+RUN pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN --mount=type=bind,source=./docker/main/requirements-dev.txt,target=/workspace/frigate/requirements-dev.txt \
     pip3 install -r requirements-dev.txt

@@ -2,6 +2,10 @@
 
 set -euxo pipefail
 
+# 使用阿里云 APT 镜像源加速
+sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+sed -i 's|http://security.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+
 apt-get -qq update
 
 apt-get -qq install --no-install-recommends -y \
