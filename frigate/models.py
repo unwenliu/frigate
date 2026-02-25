@@ -78,6 +78,10 @@ class Recordings(Model):
     dBFS = IntegerField(null=True)
     segment_size = FloatField(default=0)  # this should be stored as MB
     regions = IntegerField(null=True)
+    # Cloud upload related fields
+    cloud_upload_status = CharField(default="pending", max_length=20, index=True)
+    cloud_fid = CharField(null=True, max_length=64)  # Cloud file ID
+    cloud_upload_error = TextField(null=True)  # Upload error message
 
 
 class Export(Model):

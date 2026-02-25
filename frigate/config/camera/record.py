@@ -17,6 +17,7 @@ __all__ = [
     "ReviewRetainConfig",
     "RecordRetainConfig",
     "RetainModeEnum",
+    "CloudUploadConfig",
 ]
 
 DEFAULT_TIME_LAPSE_FFMPEG_ARGS = "-vf setpts=0.04*PTS -r 30"
@@ -103,6 +104,10 @@ class RecordConfig(FrigateBaseModel):
     enabled_in_config: Optional[bool] = Field(
         default=None, title="Keep track of original state of recording."
     )
+    cloud_upload: "CloudUploadConfig" = Field(
+        default_factory=lambda: CloudUploadConfig(),
+        title="Cloud storage upload configuration.",
+    )
 
     @property
     def event_pre_capture(self) -> int:
@@ -122,3 +127,45 @@ class RecordConfig(FrigateBaseModel):
             return self.alerts.post_capture
         else:
             return self.detections.post_capture
+
+
+class CloudUploadConfig(FrigateBaseModel):
+    """云存储上传配置"""
+
+    enabled: bool = Field(default=False, title="启用云存储上传")
+    openlist_base_url: str = Field(
+        default="https://openlist.example.com",
+        title="OpenList API 地址"
+    )
+    openlist_admin_token: str = Field(
+        default="",
+        title="OpenList 管理员令牌"
+    )
+    openlist_storage_id: int = Field(
+        default=1,
+        title="存储空间 ID"
+    )
+    upload_dir_name: str = Field(
+        default="",
+        title="云盘目标目录名称 (可选，如 'backup_docker_app')"
+    )
+    retry_times: int = Field(
+        default=3,
+        title="单次上传重试次数"
+    )
+    retry_interval: int = Field(
+        default=60,
+        title="失败重试间隔(秒)"
+    )
+    max_retry_count: int = Field(
+        default=10,
+        title="最大重试次数"
+    )
+    cloud_retain_days: int = Field(
+        default=30,
+        title="云端保留天数"
+    )
+    cleanup_interval: int = Field(
+        default=60,
+        title="清理检查间隔(分钟)"
+    )

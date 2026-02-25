@@ -99,6 +99,26 @@ class RecordingMaintainer(threading.Thread):
         self.end_time_cache: dict[str, Tuple[datetime.datetime, float]] = {}
         self.unexpected_cache_files_logged: bool = False
 
+        # Initialize cloud upload manager
+        self.cloud_uploader = None
+        if config.record.cloud_upload.enabled:
+            from frigate.record.cloud_upload import CloudUploadManager, CloudUploadConfig
+            cloud_config = CloudUploadConfig(
+                enabled=config.record.cloud_upload.enabled,
+                openlist_base_url=config.record.cloud_upload.openlist_base_url,
+                openlist_admin_token=config.record.cloud_upload.openlist_admin_token,
+                openlist_storage_id=config.record.cloud_upload.openlist_storage_id,
+                upload_dir_name=config.record.cloud_upload.upload_dir_name,
+                retry_times=config.record.cloud_upload.retry_times,
+                retry_interval=config.record.cloud_upload.retry_interval,
+                max_retry_count=config.record.cloud_upload.max_retry_count,
+                cloud_retain_days=config.record.cloud_upload.cloud_retain_days,
+                cleanup_interval=config.record.cloud_upload.cleanup_interval,
+            )
+            self.cloud_uploader = CloudUploadManager(cloud_config, stop_event)
+            self.cloud_uploader.start()
+            self.cloud_uploader.load_pending_uploads()
+
     async def move_files(self) -> None:
         cache_files = [
             d
@@ -577,8 +597,14 @@ class RecordingMaintainer(threading.Thread):
                     random.choices(string.ascii_lowercase + string.digits, k=6)
                 )
 
+                recording_id = f"{start_time.timestamp()}-{rand_id}"
+
+                # Trigger cloud upload if enabled
+                if self.cloud_uploader:
+                    self.cloud_uploader.enqueue_upload(recording_id, file_path)
+
                 return {
-                    Recordings.id.name: f"{start_time.timestamp()}-{rand_id}",
+                    Recordings.id.name: recording_id,
                     Recordings.camera.name: camera,
                     Recordings.path.name: file_path,
                     Recordings.start_time.name: start_time.timestamp(),

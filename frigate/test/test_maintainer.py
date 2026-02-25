@@ -17,6 +17,11 @@ class TestMaintainer(unittest.IsolatedAsyncioTestCase):
     async def test_move_files_survives_bad_filename(self):
         config = MagicMock(spec=FrigateConfig)
         config.cameras = {}
+        # Mock the record configuration including cloud_upload
+        mock_cloud_upload = MagicMock()
+        mock_cloud_upload.enabled = False
+        config.record = MagicMock()
+        config.record.cloud_upload = mock_cloud_upload
         stop_event = MagicMock()
 
         maintainer = RecordingMaintainer(config, stop_event)
