@@ -25,6 +25,9 @@ CLOUD_UPLOAD_UPLOADING = "uploading"  # 上传中
 CLOUD_UPLOAD_SUCCESS = "success"      # 上传成功
 CLOUD_UPLOAD_FAILED = "failed"        # 上传失败
 
+# 云存储空间类型常量 (与 wopan_sdk 保持一致)
+SPACE_TYPE_PERSONAL = "0"  # 个人空间
+
 
 @dataclass
 class CloudUploadConfig:
@@ -234,7 +237,7 @@ class CloudUploadManager(threading.Thread):
 
             # 如果不存在则创建
             create_result = self._client.create_directory(
-                space_type=self._client.SPACE_TYPE_PERSONAL,
+                space_type=SPACE_TYPE_PERSONAL,
                 parent_directory_id="0",
                 directory_name="frigate",
             )
@@ -299,7 +302,7 @@ class CloudUploadManager(threading.Thread):
                 # 目录不存在,创建
                 if not found:
                     create_result = self._client.create_directory(
-                        space_type=self._client.SPACE_TYPE_PERSONAL,
+                        space_type=SPACE_TYPE_PERSONAL,
                         parent_directory_id=current_dir_id,
                         directory_name=part,
                     )
@@ -426,7 +429,7 @@ class CloudUploadManager(threading.Thread):
                     # 删除云端文件
                     if rec.cloud_fid:
                         self._client.delete_file(
-                            space_type=self._client.SPACE_TYPE_PERSONAL,
+                            space_type=SPACE_TYPE_PERSONAL,
                             dir_list=[],
                             file_list=[rec.cloud_fid],
                         )
