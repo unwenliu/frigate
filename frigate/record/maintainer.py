@@ -115,7 +115,7 @@ class RecordingMaintainer(threading.Thread):
                 cloud_retain_days=config.record.cloud_upload.cloud_retain_days,
                 cleanup_interval=config.record.cloud_upload.cleanup_interval,
             )
-            self.cloud_uploader = CloudUploadManager(cloud_config, stop_event)
+            self.cloud_uploader = CloudUploadManager(cloud_config, stop_event, config.cameras)
             self.cloud_uploader.start()
             self.cloud_uploader.load_pending_uploads()
 

@@ -341,6 +341,7 @@ FROM scratch AS rootfs
 WORKDIR /opt/frigate/
 COPY frigate frigate/
 COPY migrations migrations/
+COPY wopan-sdk/wopan-sdk-python wopan-sdk/wopan-sdk-python
 COPY --from=web-build /work/dist/ web/
 
 # Frigate final container

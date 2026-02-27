@@ -68,10 +68,11 @@ class CloudUploadManager(threading.Thread):
     - 定期清理过期云端文件
     """
 
-    def __init__(self, config: CloudUploadConfig, stop_event: threading.Event):
+    def __init__(self, config: CloudUploadConfig, stop_event: threading.Event, camera_configs: dict = None):
         super().__init__(name="cloud_upload_manager", daemon=True)
         self.config = config
         self.stop_event = stop_event
+        self.camera_configs = camera_configs or {}  # 摄像头配置，用于获取 friendly_name
         self.upload_queue: Queue[UploadTask] = Queue()
         self._client = None             # WoClient 实例 (延迟初始化)
         self._dir_cache: Dict[str, str] = {}  # 目录路径 -> 目录ID 缓存
@@ -102,7 +103,7 @@ class CloudUploadManager(threading.Thread):
             )
             self._client = WoClient.default_with_openlist(openlist_config)
 
-            # 根据 upload_dir_name 查找目录ID
+            # 根据 upload_dir_name 查找目录ID，如果不存在则创建
             if self.config.upload_dir_name:
                 self.uploadDirID = self._find_directory_by_name_recursive(
                     self.config.upload_dir_name, "0"
@@ -110,7 +111,18 @@ class CloudUploadManager(threading.Thread):
                 if self.uploadDirID:
                     logger.info(f"Found upload directory by name: {self.config.upload_dir_name} -> {self.uploadDirID}")
                 else:
-                    logger.warning(f"Could not find directory with name: {self.config.upload_dir_name}")
+                    # 目录不存在，创建目录
+                    logger.info(f"Creating upload directory: {self.config.upload_dir_name}")
+                    create_result = self._client.create_directory(
+                        space_type=SPACE_TYPE_PERSONAL,
+                        parent_directory_id="0",
+                        directory_name=self.config.upload_dir_name,
+                    )
+                    if create_result and hasattr(create_result, 'id'):
+                        self.uploadDirID = create_result.id
+                        logger.info(f"Created upload directory: {self.config.upload_dir_name} -> {self.uploadDirID}")
+                    else:
+                        logger.warning(f"Failed to create directory: {self.config.upload_dir_name}")
 
             logger.info("Wopan client initialized successfully")
             return True
@@ -183,6 +195,12 @@ class CloudUploadManager(threading.Thread):
         if not cloud_path.startswith("/"):
             cloud_path = "/" + cloud_path
 
+        # 将 UTC 时间路径转换为本地时区路径
+        cloud_path = self._convert_utc_path_to_local(cloud_path)
+
+        # 将摄像头内部名称替换为 friendly_name
+        cloud_path = self._replace_camera_with_friendly_name(cloud_path)
+
         task = UploadTask(
             recording_id=recording_id,
             file_path=file_path,
@@ -196,6 +214,69 @@ class CloudUploadManager(threading.Thread):
         self._update_recording_status(recording_id, CLOUD_UPLOAD_PENDING)
 
         logger.debug(f"Enqueued cloud upload: {recording_id} -> {cloud_path}")
+
+    def _convert_utc_path_to_local(self, cloud_path: str) -> str:
+        """
+        将 UTC 时间路径转换为本地时区路径
+        例如: /2024-01-15/14/cam/30.45.mp4 -> /2024-01-15/22/cam/30.45.mp4 (UTC+8)
+        """
+        import re
+
+        # 匹配日期/小时模式: /YYYY-MM-DD/HH/
+        match = re.match(r'^/(\d{4}-\d{2}-\d{2})/(\d{2})(/.*)$', cloud_path)
+        if match:
+            date_str = match.group(1)
+            hour_str = match.group(2)
+            rest_path = match.group(3)
+
+            try:
+                # 解析 UTC 时间
+                utc_time = datetime.datetime.strptime(f"{date_str} {hour_str}:00:00", "%Y-%m-%d %H:%M:%S")
+                # 添加 UTC 时区
+                utc_time = utc_time.replace(tzinfo=datetime.timezone.utc)
+                # 转换为本地时区
+                local_time = utc_time.astimezone()
+                # 格式化回路径
+                local_path = f"/{local_time.strftime('%Y-%m-%d/%H')}{rest_path}"
+                logger.debug(f"Converted UTC path: {cloud_path} -> {local_path}")
+                return local_path
+            except Exception as e:
+                logger.warning(f"Failed to convert UTC path to local: {e}")
+
+        return cloud_path
+
+    def _replace_camera_with_friendly_name(self, cloud_path: str) -> str:
+        """
+        将路径中的摄像头内部名称替换为 friendly_name
+        例如: /2024-01-15/14/cam_a32cfd59/30.45.mp4 -> /2024-01-15/14/户外1/30.45.mp4
+
+        Args:
+            cloud_path: 云端路径
+
+        Returns:
+            替换后的路径，如果未找到 friendly_name 则返回原路径
+        """
+        import re
+
+        # 匹配路径模式: /YYYY-MM-DD/HH/camera_name/filename.mp4
+        match = re.match(r'^/(\d{4}-\d{2}-\d{2})/(\d{2})/([^/]+)(/.*)$', cloud_path)
+        if match:
+            date_str = match.group(1)
+            hour_str = match.group(2)
+            camera_name = match.group(3)
+            rest_path = match.group(4)
+
+            # 在 camera_configs 中查找对应的 friendly_name
+            if camera_name in self.camera_configs:
+                camera_config = self.camera_configs[camera_name]
+                friendly_name = getattr(camera_config, "friendly_name", None)
+                if friendly_name:
+                    # 替换为 friendly_name
+                    new_path = f"/{date_str}/{hour_str}/{friendly_name}{rest_path}"
+                    logger.debug(f"Replaced camera name: {cloud_path} -> {new_path}")
+                    return new_path
+
+        return cloud_path
 
     def _update_recording_status(self, recording_id: str, status: str,
                                   cloud_fid: str = "", error: str = "") -> None:
