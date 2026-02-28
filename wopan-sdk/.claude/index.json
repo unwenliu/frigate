@@ -1,0 +1,261 @@
+{
+  "project_name": "wopan-sdk",
+  "last_updated": "2026-02-26T14:11:25+08:00",
+  "root_path": "/home/unw/frigate/wopan-sdk",
+  "status": "initialized",
+  "modules": [
+    {
+      "name": "wopan-sdk-go",
+      "path": "wopan-sdk-go",
+      "language": "Go",
+      "version": "go1.20",
+      "description": "联通沃盘 Go SDK - 提供完整的文件管理和上传功能",
+      "entry_points": [
+        "client.go"
+      ],
+      "dependencies": [
+        "github.com/go-resty/resty/v2@v2.7.0",
+        "golang.org/x/net@v0.11.0"
+      ],
+      "key_files": {
+        "consts": "consts.go",
+        "types": "types.go",
+        "client": "client.go",
+        "crypto": "crypto.go",
+        "aes": "aes.go"
+      },
+      "api_modules": {
+        "user_auth": "api-user.go",
+        "file_system": "api-fs.go",
+        "wohome": "api-wohome.go",
+        "upload": "upload.go"
+      },
+      "tests": [
+        "api-user_test.go",
+        "crypto_test.go",
+        "upload_test.go",
+        "client_openlist_test.go"
+      ],
+      "documentation": [
+        "README.md",
+        "CLAUDE.md",
+        "docs/api-user.md",
+        "docs/personal-fs.md",
+        "docs/family-fs.md",
+        "docs/wohome.md"
+      ],
+      "config_files": [
+        "go.mod",
+        "go.sum",
+        ".gitignore"
+      ],
+      "features": [
+        "用户认证与令牌管理",
+        "文件查询、创建、重命名、移动、复制、删除",
+        "分片上传与断点续传",
+        "AES 加密/解密",
+        "多空间类型支持（个人/家庭/私有）",
+        "OpenList 管理后台认证支持"
+      ],
+      "status": "implemented"
+    },
+    {
+      "name": "wopan-sdk-python",
+      "path": "wopan-sdk-python",
+      "language": "Python",
+      "version": "0.1.0",
+      "description": "联通沃盘 Python SDK - 支持同步/异步调用",
+      "entry_points": [
+        "wopan_sdk/__init__.py",
+        "wopan_sdk/client.py",
+        "wopan_sdk/client_async.py"
+      ],
+      "dependencies": [
+        "requests>=2.31.0",
+        "pycryptodome>=3.19.0"
+      ],
+      "dev_dependencies": [
+        "pytest>=7.0.0",
+        "black>=23.0.0",
+        "flake8>=6.0.0",
+        "aiohttp>=3.9.0"
+      ],
+      "key_files": {
+        "consts": "wopan_sdk/consts.py",
+        "client": "wopan_sdk/client.py",
+        "client_async": "wopan_sdk/client_async.py",
+        "crypto": "wopan_sdk/crypto.py",
+        "exceptions": "wopan_sdk/exceptions.py"
+      },
+      "api_modules": {
+        "file_system": "wopan_sdk/api_fs.py",
+        "file_system_async": "wopan_sdk/api_fs_async.py",
+        "upload": "wopan_sdk/upload.py",
+        "upload_async": "wopan_sdk/upload_async.py",
+        "client_extended": "wopan_sdk/client_extended.py",
+        "client_extended_async": "wopan_sdk/client_extended_async.py"
+      },
+      "tests": [
+        "tests/test_basic.py",
+        "tests/test_openlist.py"
+      ],
+      "documentation": [
+        "README.md",
+        "CLAUDE.md",
+        "QUICKSTART.md"
+      ],
+      "config_files": [
+        "setup.py",
+        "requirements.txt",
+        ".gitignore"
+      ],
+      "examples": [
+        "examples/upload_example.py",
+        "examples/upload_async_example.py"
+      ],
+      "features": [
+        "用户认证与令牌管理",
+        "文件查询、创建、重命名、移动、复制、删除",
+        "分片上传与断点续传",
+        "AES 加密/解密",
+        "多空间类型支持（个人/家庭/私有）",
+        "同步/异步 API 双模式",
+        "Mixin 模式扩展功能",
+        "OpenList 管理后台认证支持"
+      ],
+      "status": "implemented"
+    }
+  ],
+  "scan_summary": {
+    "total_files_estimated": 71,
+    "files_scanned": 71,
+    "coverage_percentage": 100,
+    "truncated": false,
+    "scan_stages_completed": ["A", "B"],
+    "scan_stages_skipped": []
+  },
+  "ignore_rules": {
+    "source": "default",
+    "patterns": [
+      "node_modules/**",
+      ".git/**",
+      ".github/**",
+      "dist/**",
+      "build/**",
+      ".next/**",
+      "__pycache__/**",
+      "*.lock",
+      "*.log",
+      "*.bin",
+      "*.pdf",
+      "*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.gif",
+      "*.mp4",
+      "*.zip",
+      "*.tar",
+      "*.gz"
+    ]
+  },
+  "gaps": {
+    "missing_entries": [],
+    "missing_interfaces": [],
+    "missing_tests": [
+      "wopan-sdk-python: 缺少 api_fs_async.py 完整测试覆盖",
+      "wopan-sdk-python: 缺少 upload_async.py 完整测试覆盖",
+      "wopan-sdk-go: 缺少 api-wohome.go 完整测试覆盖"
+    ],
+    "missing_data_models": [],
+    "missing_configurations": []
+  },
+  "next_steps": [
+    "补充 Python 异步模块的完整单元测试",
+    "补充 Go WoHome API 的测试用例",
+    "添加集成测试（需要真实 API 环境或 mock）",
+    "添加性能基准测试（特别是上传功能）"
+  ],
+  "metadata": {
+    "scan_duration_seconds": 8,
+    "tools_used": [
+      "Read",
+      "Glob"
+    ],
+    "scan_depth": "full_module_scan"
+  },
+  "file_tree": {
+    "wopan-sdk-go": {
+      "core": [
+        "client.go",
+        "types.go",
+        "consts.go",
+        "option.go",
+        "vars.go",
+        "header.go",
+        "req_body.go",
+        "request.go",
+        "operation.go"
+      ],
+      "crypto": [
+        "aes.go",
+        "crypto.go"
+      ],
+      "api": [
+        "api-user.go",
+        "api-fs.go",
+        "api-wohome.go"
+      ],
+      "upload": [
+        "upload.go"
+      ],
+      "tests": [
+        "api-user_test.go",
+        "crypto_test.go",
+        "upload_test.go",
+        "client_openlist_test.go"
+      ],
+      "docs": [
+        "docs/api-user.md",
+        "docs/personal-fs.md",
+        "docs/family-fs.md",
+        "docs/wohome.md"
+      ]
+    },
+    "wopan-sdk-python": {
+      "core": [
+        "wopan_sdk/__init__.py",
+        "wopan_sdk/client.py",
+        "wopan_sdk/client_async.py",
+        "wopan_sdk/consts.py",
+        "wopan_sdk/exceptions.py"
+      ],
+      "crypto": [
+        "wopan_sdk/crypto.py"
+      ],
+      "api": [
+        "wopan_sdk/api_fs.py",
+        "wopan_sdk/api_fs_async.py",
+        "wopan_sdk/client_extended.py",
+        "wopan_sdk/client_extended_async.py"
+      ],
+      "upload": [
+        "wopan_sdk/upload.py",
+        "wopan_sdk/upload_async.py"
+      ],
+      "tests": [
+        "tests/test_basic.py",
+        "tests/test_openlist.py"
+      ],
+      "examples": [
+        "examples/upload_example.py",
+        "examples/upload_async_example.py"
+      ],
+      "debug_scripts": [
+        "debug_create_dir.py",
+        "debug_http.py",
+        "debug_query.py",
+        "test_upload_to_existing_dir.py"
+      ]
+    }
+  }
+}

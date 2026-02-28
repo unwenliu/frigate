@@ -1,3 +1,0 @@
-[submodule "wopan-sdk"]
-	path = wopan-sdk
-	url = ssh://git@rnsgame8.eu.org/opt/git/wopan-sdk.git
