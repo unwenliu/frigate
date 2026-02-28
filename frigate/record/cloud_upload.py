@@ -560,6 +560,8 @@ class CloudUploadManager(threading.Thread):
 
             if success:
                 self._pending_tasks.pop(task.recording_id, None)
+                # 上传成功后暂停 1 秒，避免频繁请求触发网盘限流
+                time.sleep(1)
             else:
                 # 上传失败,加入重试队列
                 task.retry_count += 1
