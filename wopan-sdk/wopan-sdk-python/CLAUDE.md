@@ -4,8 +4,8 @@
 
 ---
 
-> 最后更新：2026-02-26 14:11:25
-> 状态：已实现
+> 最后更新：2026-03-01 14:00:41
+> 状态：已实现 OpenList 自动刷新功能
 
 ---
 
@@ -13,6 +13,7 @@
 
 | 时间 | 变更内容 |
 |------|----------|
+| 2026-03-01 14:00:41 | 新增 OpenList 自动刷新 access_token 功能及完整测试覆盖（12 个测试用例） |
 | 2026-02-26 14:11:25 | 更新文档：记录新增的调试脚本和测试文件 |
 | 2026-02-25 21:31:54 | 新增 OpenList 管理后台认证支持文档，补充完整测试列表 |
 | 2026-02-21 16:30:19 | 初始化模块文档，记录入口、接口、测试配置 |
@@ -32,6 +33,7 @@
 - 同步/异步 API 双模式
 - Mixin 模式注入扩展功能
 - **OpenList 管理后台认证支持**（新增）
+- **OpenList 自动刷新 access_token**（新增）
 
 ---
 
@@ -63,7 +65,7 @@ user = client.request_api_user(
 )
 ```
 
-### 使用 OpenList 管理后台认证
+### 使用 OpenList 管理后台认证（推荐）
 
 ```python
 from wopan_sdk import WoClient, OpenlistConfig
@@ -76,6 +78,9 @@ client = WoClient.default_with_openlist(OpenlistConfig(
     timeout=30,
     verify_ssl=False
 ))
+
+# SDK 会在令牌过期时自动调用 _refresh_token() 从 OpenList 获取新令牌
+# 无需手动处理令牌刷新逻辑
 
 # 简化版本
 client = WoClient.default_with_openlist_simple("your-admin-token", 1)
@@ -292,6 +297,30 @@ class OpenlistConfig:
 |----------|----------|
 | `tests/test_basic.py` | 加密、客户端初始化、文件类型检测、上传对象创建 |
 | `tests/test_openlist.py` | OpenList 管理后台认证测试 |
+| `tests/test_auto_refresh.py` | **OpenList 自动刷新功能测试**（新增） |
+
+### OpenList 自动刷新测试用例
+
+`tests/test_auto_refresh.py` 包含两个测试类，共 12 个测试用例：
+
+**TestOpenListAutoRefresh 类（基础功能测试）：**
+
+1. **test_config_is_cached** - 验证 OpenList 配置被正确缓存
+2. **test_refresh_from_openlist_success** - 测试从 OpenList 成功刷新令牌
+3. **test_refresh_from_openlist_api_error** - 测试刷新令牌时 API 返回错误
+4. **test_refresh_from_openlist_empty_token** - 测试刷新令牌时返回空令牌
+5. **test_refresh_from_openlist_network_error** - 测试刷新令牌时网络请求失败
+6. **test_refresh_token_uses_openlist** - 测试 RefreshToken 优先使用 OpenList
+7. **test_refresh_token_fallback_to_callback** - 测试 RefreshToken 回退到回调函数
+8. **test_concurrent_refresh_safety** - 测试并发刷新的线程安全性（10 个线程）
+9. **test_multiple_refreshes** - 测试多次刷新令牌
+10. **test_refresh_with_custom_base_url** - 测试使用自定义 BaseURL 刷新令牌
+11. **test_refresh_with_custom_timeout** - 测试使用自定义超时刷新令牌
+12. **test_refresh_with_debug_mode** - 测试调试模式下的刷新
+
+**TestRefreshTokenIntegration 类（集成测试）：**
+
+1. **test_full_refresh_cycle** - 测试完整的刷新周期
 
 ### 调试脚本（开发中）
 
@@ -309,10 +338,13 @@ class OpenlistConfig:
 pytest tests/ -v
 
 # 运行特定测试
-pytest tests/test_basic.py::TestCrypto -v
+pytest tests/test_auto_refresh.py::TestOpenListAutoRefresh -v
 
 # 查看覆盖率
 pytest --cov=wopan_sdk tests/
+
+# 运行特定测试用例
+pytest tests/test_auto_refresh.py::TestOpenListAutoRefresh::test_concurrent_refresh_safety -v
 ```
 
 ### 代码质量工具
@@ -361,6 +393,56 @@ class Crypto:
 3. AES-CBC 加密（PKCS7 填充）
 4. Base64 编码输出
 ```
+
+---
+
+## OpenList 自动刷新机制
+
+### 触发条件
+
+当 API 返回错误码 `9999`（令牌过期）且 `retry=True` 时，SDK 会自动触发令牌刷新。
+
+### 刷新策略
+
+```python
+def _refresh_token(self) -> None:
+    """
+    刷新访问令牌
+
+    优先级：
+    1. OpenList 配置自动刷新
+    2. 用户自定义回调函数
+    """
+    # 1. 使用锁防止并发刷新
+    if not self._refreshing_lock.acquire(blocking=False):
+        return  # 已有其他线程在刷新
+
+    try:
+        # 2. 优先使用 OpenList 配置自动刷新
+        if self._openlist_config:
+            self._refresh_from_openlist()
+        # 3. 其次使用用户自定义的回调函数
+        elif self.on_refresh_token:
+            self.on_refresh_token(self.access_token, self.refresh_token)
+    finally:
+        self._refreshing_lock.release()
+```
+
+### 线程安全
+
+- 使用 `threading.Lock` 保护刷新逻辑
+- 防止多个线程同时刷新令牌
+- 使用非阻塞模式获取锁（`acquire(blocking=False)`）
+
+### 配置缓存
+
+- `OpenlistConfig` 在初始化时被保存到 `WoClient._openlist_config` 字段
+- 后续刷新时直接使用缓存的配置，无需用户重新传入
+
+### 自动重试
+
+- 刷新成功后，原始请求会自动重试（`retry=False` 防止无限循环）
+- 用户无感知，体验流畅
 
 ---
 
@@ -461,6 +543,20 @@ client.set_debug(True)
 
 ### Q5: 如何处理令牌自动刷新？
 
+**使用 OpenList 自动刷新（推荐）：**
+
+```python
+from wopan_sdk import WoClient, OpenlistConfig
+
+client = WoClient.default_with_openlist(OpenlistConfig(
+    admin_token="your-admin-token",
+    storage_id=1
+))
+# SDK 会自动处理刷新，无需手动干预
+```
+
+**使用自定义回调：**
+
 ```python
 def on_token_refresh(access_token, refresh_token):
     print("Token refreshed!")
@@ -470,23 +566,41 @@ def on_token_refresh(access_token, refresh_token):
 client.on_refresh_token_callback(on_token_refresh)
 ```
 
-### Q6: 如何使用 OpenList 管理后台认证？
+### Q6: OpenList 自动刷新的优缺点是什么？
+
+**优点：**
+- 无需手动管理令牌生命周期
+- 自动处理令牌过期场景
+- 线程安全，支持并发请求
+- 可配置超时和 SSL 验证
+- 自动重试原始请求
+
+**缺点：**
+- 依赖 OpenList API 可用性
+- 需要维护 admin_token 安全性
+- 网络延迟可能导致请求重试
+
+### Q7: 如何自定义 OpenList 请求超时？
 
 ```python
-from wopan_sdk import WoClient, OpenlistConfig
-
-# 完整配置
 config = OpenlistConfig(
     admin_token="your-admin-token",
     storage_id=1,
-    base_url="https://custom.openlist.com",  # 可选
-    timeout=30,                               # 可选
-    verify_ssl=False                          # 可选
+    timeout=60,  # 60 秒超时
+    base_url="https://custom.openlist.com"
 )
 client = WoClient.default_with_openlist(config)
+```
 
-# 简化版本
-client = WoClient.default_with_openlist_simple("your-admin-token", 1)
+### Q8: 如何禁用 SSL 验证？
+
+```python
+config = OpenlistConfig(
+    admin_token="your-admin-token",
+    storage_id=1,
+    verify_ssl=False  # 禁用 SSL 验证（仅用于测试）
+)
+client = WoClient.default_with_openlist(config)
 ```
 
 ### Q7: 如何获取访问令牌？
@@ -529,7 +643,7 @@ from . import client_extended_async
 wopan-sdk-python/
 ├── wopan_sdk/
 │   ├── __init__.py                    # 模块导出
-│   ├── client.py                      # 核心同步客户端（含 OpenList 支持）
+│   ├── client.py                      # 核心同步客户端（含 OpenList 支持和自动刷新）
 │   ├── client_async.py                # 核心异步客户端
 │   ├── client_extended.py             # 同步客户端扩展注入
 │   ├── client_extended_async.py       # 异步客户端扩展注入
@@ -544,7 +658,8 @@ wopan-sdk-python/
 ├── tests/
 │   ├── __init__.py
 │   ├── test_basic.py                  # 基础功能测试
-│   └── test_openlist.py               # OpenList 认证测试
+│   ├── test_openlist.py               # OpenList 认证测试
+│   └── test_auto_refresh.py           # OpenList 自动刷新测试（新增）
 ├── examples/
 │   ├── upload_example.py              # 上传示例
 │   └── upload_async_example.py        # 异步上传示例

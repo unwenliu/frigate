@@ -4,8 +4,8 @@
 
 ---
 
-> 最后更新：2026-02-26 14:11:25
-> 状态：已实现
+> 最后更新：2026-03-01 14:00:41
+> 状态：已实现 OpenList 自动刷新功能
 
 ---
 
@@ -13,6 +13,7 @@
 
 | 时间 | 变更内容 |
 |------|----------|
+| 2026-03-01 14:00:41 | 新增 OpenList 自动刷新 access_token 功能及完整测试覆盖（10 个测试用例） |
 | 2026-02-26 14:11:25 | 更新文档：补充依赖信息和 API 方法列表 |
 | 2026-02-25 21:31:54 | 新增 OpenList 管理后台认证支持文档，补充完整测试列表 |
 | 2026-02-21 16:30:19 | 初始化模块文档，记录入口、接口、测试配置 |
@@ -30,6 +31,7 @@
 - AES 加密/解密
 - 多空间类型支持（个人/家庭/私有）
 - **OpenList 管理后台认证支持**（新增）
+- **OpenList 自动刷新 access_token**（新增）
 
 ---
 
@@ -63,7 +65,7 @@ func main() {
 }
 ```
 
-### 使用 OpenList 管理后台认证
+### 使用 OpenList 管理后台认证（推荐）
 
 ```go
 // 使用 OpenList 管理后台 API 获取令牌并初始化
@@ -74,6 +76,9 @@ client, err := wopan.DefaultWithOpenlist(wopan.OpenlistConfig{
 if err != nil {
     log.Fatal(err)
 }
+
+// SDK 会在令牌过期时自动调用 RefreshToken() 从 OpenList 获取新令牌
+// 无需手动处理令牌刷新逻辑
 
 // 或使用简化版本
 client, err := wopan.DefaultWithOpenlistSimple("your-admin-token", 1)
@@ -172,6 +177,8 @@ const (
     DefaultBaseURL      = "https://panservice.mail.wo.cn"
     DefaultZoneURL      = "https://tjupload.pan.wo.cn"
     DefaultPartSize     = 8 * 1024 * 1024  // 8MB 分片大小
+    DefaultOpenlistBaseURL = "https://openlist.example.com"
+    OpenlistTimeout     = 30  // 秒
 )
 
 // 空间类型
@@ -311,6 +318,22 @@ type OpenlistConfig struct {
 | `crypto_test.go` | AES 加密/解密测试 |
 | `upload_test.go` | 文件上传测试 |
 | `client_openlist_test.go` | OpenList 管理后台认证测试 |
+| `refresh_token_test.go` | **OpenList 自动刷新功能测试**（新增） |
+
+### OpenList 自动刷新测试用例
+
+`refresh_token_test.go` 包含 10 个完整的测试用例：
+
+1. **TestOpenListAutoRefresh_ConfigCached** - 验证 OpenList 配置被正确缓存
+2. **TestOpenListAutoRefresh_RefreshTokenSuccess** - 测试通过 RefreshToken 从 OpenList 刷新令牌
+3. **TestOpenListAutoRefresh_RefreshTokenAPIError** - 测试刷新令牌时 API 返回错误
+4. **TestOpenListAutoRefresh_ConcurrentRefresh** - 测试并发刷新的安全性（10 个 goroutine）
+5. **TestOpenListAutoRefresh_RefreshTokenEmptyToken** - 测试刷新令牌时返回空令牌
+6. **TestOpenListAutoRefresh_RefreshTokenHTTPError** - 测试刷新令牌时 HTTP 请求失败
+7. **TestOpenListAutoRefresh_NilOpenListConfig** - 测试没有 OpenList 配置时的行为
+8. **TestOpenListAutoRefresh_MultipleRefresh** - 测试多次刷新令牌
+9. **TestOpenListAutoRefresh_CustomTimeout** - 测试自定义超时配置
+10. **TestOpenListAutoRefresh_RefreshLockPreventsRace** - 测试刷新锁防止竞态条件
 
 ### 运行测试
 
@@ -319,10 +342,13 @@ type OpenlistConfig struct {
 go test -v ./...
 
 # 运行特定测试
-go test -v -run TestCrypto
+go test -v -run TestOpenListAutoRefresh
 
 # 查看覆盖率
 go test -cover ./...
+
+# 运行基准测试
+go test -bench=. -benchmem
 ```
 
 ---
@@ -361,6 +387,47 @@ func (c *Crypto) Encrypt(content string) (string, error)
 // Decrypt 解密 Base64 编码字符串
 func (c *Crypto) Decrypt(content string) (string, error)
 ```
+
+---
+
+## OpenList 自动刷新机制
+
+### 触发条件
+
+当 API 返回错误码 `9999`（令牌过期）时，SDK 会自动触发令牌刷新。
+
+### 刷新策略
+
+```go
+func (w *WoClient) refreshToken() error {
+    // 1. 使用锁防止并发刷新
+    w.refreshingLock.Lock()
+    defer w.refreshingLock.Unlock()
+
+    // 2. 优先使用 OpenList 配置自动刷新
+    if w.openlistConfig != nil {
+        return w.refreshFromOpenlist()
+    }
+
+    // 3. 其次使用用户自定义的回调函数
+    if w.onRefreshToken != nil {
+        // 调用回调函数由用户处理刷新逻辑
+    }
+
+    return fmt.Errorf("no refresh mechanism available")
+}
+```
+
+### 线程安全
+
+- 使用 `sync.Mutex` 保护刷新逻辑
+- 防止多个 goroutine 同时刷新令牌
+- 确保在并发环境下只有一个刷新操作执行
+
+### 配置缓存
+
+- `OpenlistConfig` 在初始化时被保存到 `WoClient.openlistConfig` 字段
+- 后续刷新时直接使用缓存的配置，无需用户重新传入
 
 ---
 
@@ -403,7 +470,17 @@ client.EnableTrace()
 
 ### Q4: 如何处理令牌刷新？
 
-设置回调函数：
+**使用 OpenList 自动刷新（推荐）：**
+
+```go
+client, err := wopan.DefaultWithOpenlist(wopan.OpenlistConfig{
+    AdminToken: "your-admin-token",
+    StorageID:  1,
+})
+// SDK 会自动处理刷新，无需手动干预
+```
+
+**使用自定义回调：**
 
 ```go
 client.OnRefreshToken(func(accessToken, refreshToken string) {
@@ -412,20 +489,27 @@ client.OnRefreshToken(func(accessToken, refreshToken string) {
 })
 ```
 
-### Q5: 如何使用 OpenList 管理后台认证？
+### Q5: OpenList 自动刷新的优缺点是什么？
+
+**优点：**
+- 无需手动管理令牌生命周期
+- 自动处理令牌过期场景
+- 线程安全，支持并发请求
+- 可配置超时和重试策略
+
+**缺点：**
+- 依赖 OpenList API 可用性
+- 需要维护 admin_token 安全性
+- 网络延迟可能导致请求重试
+
+### Q6: 如何自定义 OpenList 请求超时？
 
 ```go
-// 完整配置
 client, err := wopan.DefaultWithOpenlist(wopan.OpenlistConfig{
-    AdminToken:         "your-admin-token",
-    StorageID:          1,
-    BaseURL:            "https://custom.openlist.com",
-    Timeout:            60 * time.Second,
-    InsecureSkipVerify: false,
+    AdminToken: "your-admin-token",
+    StorageID:  1,
+    Timeout:    60 * time.Second,  // 60 秒超时
 })
-
-// 简化版本
-client, err := wopan.DefaultWithOpenlistSimple("your-admin-token", 1)
 ```
 
 ### Q6: 如何设置代理？
@@ -440,7 +524,7 @@ client.SetProxy("http://proxy:8080")
 
 ```
 wopan-sdk-go/
-├── client.go                # 核心客户端类（含 OpenList 支持）
+├── client.go                # 核心客户端类（含 OpenList 支持和自动刷新）
 ├── types.go                 # 通用数据类型
 ├── consts.go                # 常量定义
 ├── option.go                # Option 配置模式
@@ -459,6 +543,7 @@ wopan-sdk-go/
 ├── crypto_test.go           # 加密测试
 ├── upload_test.go           # 上传测试
 ├── client_openlist_test.go  # OpenList 认证测试
+├── refresh_token_test.go    # OpenList 自动刷新测试（新增）
 ├── go.mod                   # Go 模块定义
 ├── go.sum                   # 依赖校验和
 ├── LICENSE                  # MIT 许可证

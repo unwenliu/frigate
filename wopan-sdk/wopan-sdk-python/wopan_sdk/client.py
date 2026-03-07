@@ -6,6 +6,7 @@ import json
 import hashlib
 import time
 import random
+import threading
 from typing import Optional, Dict, Any, Callable
 from dataclasses import dataclass, field
 import requests
@@ -231,6 +232,12 @@ class WoClient:
         self._zone_url_initialized = False
         self._dir_cache: Dict[str, str] = {}  # 路径到目录ID的缓存
 
+        # OpenList 配置（用于自动刷新 access_token）
+        self._openlist_config: Optional["OpenlistConfig"] = None
+
+        # 刷新锁（防止并发刷新）
+        self._refreshing_lock = threading.Lock()
+
     def set_access_token(self, token: str) -> None:
         """设置访问令牌"""
         self.access_token = token
@@ -420,12 +427,86 @@ class WoClient:
             raise WoPanException(f"HTTP request failed: {str(e)}")
 
     def _refresh_token(self) -> None:
-        """刷新令牌"""
-        # 这里应该实现实际的令牌刷新逻辑
-        # 如果有设置回调函数，则调用
-        if self.on_refresh_token:
-            # 实际实现中应该调用刷新令牌 API
-            pass
+        """
+        刷新访问令牌
+
+        如果客户端是通过 OpenList 初始化的，会自动从 OpenList 重新获取 access_token。
+        否则，如果有设置回调函数，则调用回调函数由用户处理刷新逻辑。
+        """
+        # 使用锁防止并发刷新
+        if not self._refreshing_lock.acquire(blocking=False):
+            # 已有其他线程在刷新，直接返回
+            return
+
+        try:
+            # 优先使用 OpenList 配置自动刷新
+            if self._openlist_config:
+                self._refresh_from_openlist()
+            # 其次使用用户自定义的回调函数
+            elif self.on_refresh_token:
+                self.on_refresh_token(self.access_token, self.refresh_token)
+        finally:
+            self._refreshing_lock.release()
+
+    def _refresh_from_openlist(self) -> None:
+        """
+        从 OpenList 管理后台重新获取 access_token
+
+        Raises:
+            OpenListAuthException: 获取令牌失败时抛出
+        """
+        config = self._openlist_config
+        if not config:
+            return
+
+        # 设置默认值
+        base_url = config.base_url or DEFAULT_OPENLIST_BASE_URL
+
+        # 设置请求头
+        headers = {
+            "Authorization": config.admin_token,
+            "User-Agent": DEFAULT_UA,
+            "Accept": "application/json",
+        }
+
+        try:
+            # 发送请求
+            response = requests.get(
+                f"{base_url}/api/admin/storage/get_access_token",
+                params={"id": config.storage_id},
+                headers=headers,
+                timeout=config.timeout,
+                verify=config.verify_ssl,
+            )
+            response.raise_for_status()
+
+            # 解析响应
+            resp_data = response.json()
+
+            # 检查响应状态
+            if resp_data.get("code") != 200:
+                error_msg = resp_data.get("message", "Unknown error")
+                raise OpenListAuthException(
+                    f"OpenList API returned error: code={resp_data.get('code')}, message={error_msg}"
+                )
+
+            # 提取 access_token
+            token_info = resp_data.get("data", {}).get("token_info", {})
+            new_access_token = token_info.get("access_token")
+
+            if not new_access_token:
+                raise OpenListAuthException("OpenList API returned empty access_token")
+
+            # 更新客户端的 access_token
+            self.set_access_token(new_access_token)
+
+            if self.debug:
+                print(f"[DEBUG] Access token refreshed successfully from OpenList")
+
+        except requests.RequestException as e:
+            raise OpenListAuthException(f"Failed to refresh token from OpenList API: {str(e)}")
+        except ValueError as e:  # JSON 解析错误
+            raise OpenListAuthException(f"Failed to parse OpenList API response: {str(e)}")
 
     def request_api_user(
         self,
@@ -644,7 +725,10 @@ class WoClient:
                 raise OpenListAuthException("OpenList API returned empty access_token")
 
             # 创建并返回客户端
-            return WoClient(access_token=access_token)
+            client = WoClient(access_token=access_token)
+            # 缓存 OpenList 配置，用于后续自动刷新
+            client._openlist_config = config
+            return client
 
         except requests.RequestException as e:
             raise OpenListAuthException(f"Failed to request OpenList API: {str(e)}")

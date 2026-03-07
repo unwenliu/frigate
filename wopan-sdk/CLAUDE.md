@@ -1,7 +1,7 @@
 # wopan-sdk - AI 项目上下文
 
-> 最后更新：2026-02-26 14:11:25
-> 状态：已初始化多语言 SDK 项目
+> 最后更新：2026-03-01 14:00:41
+> 状态：已初始化多语言 SDK 项目，新增 OpenList 自动刷新功能
 
 ---
 
@@ -9,6 +9,7 @@
 
 | 时间 | 变更内容 |
 |------|----------|
+| 2026-03-01 14:00:41 | 更新扫描结果，记录 OpenList 自动刷新 access_token 功能及完整测试覆盖 |
 | 2026-02-26 14:11:25 | 增量更新：识别新增的调试脚本和测试文件，更新 index.json 路径 |
 | 2026-02-25 21:31:54 | 更新扫描结果，新增 OpenList 管理后台认证支持，补充完整 API 文档 |
 | 2026-02-21 16:30:19 | 完整扫描项目结构，识别 Go 和 Python 两个 SDK 模块，生成模块级文档 |
@@ -27,7 +28,7 @@ wopan-sdk 是一个多语言的联通沃盘（WoPan）SDK 项目，提供 Go 和
 - 内置 AES 加密/解密
 - 分片上传与断点续传支持
 - 同步/异步 API 支持
-- **OpenList 管理后台认证支持**（新增）
+- **OpenList 管理后台认证与自动刷新支持**（新增）
 
 ---
 
@@ -47,6 +48,7 @@ wopan-sdk 是一个多语言的联通沃盘（WoPan）SDK 项目，提供 Go 和
 - **多空间支持**：统一接口支持个人/家庭/私有空间
 - **扩展性**：支持同步和异步两种调用模式
 - **Mixin 模式**（Python）：通过注入扩展功能，保持核心简洁
+- **令牌自动管理**：OpenList 模式下自动刷新过期的 access_token
 
 ---
 
@@ -62,18 +64,20 @@ graph TD
     B --> B2["文件操作<br/>(api-fs.go)"]
     B --> B3["上传功能<br/>(upload.go)"]
     B --> B4["加密模块<br/>(crypto.go)"]
-    B --> B5["OpenList 支持<br/>(client.go)"]
+    B --> B5["OpenList 自动刷新<br/>(client.go + refresh_token_test.go)"]
 
     C --> C1["客户端核心<br/>(client.py)"]
     C --> C2["文件系统<br/>(api_fs.py)"]
     C --> C3["上传模块<br/>(upload.py)"]
     C --> C4["加密工具<br/>(crypto.py)"]
     C --> C5["异步支持<br/>(client_async.py)"]
-    C --> C6["OpenList 支持<br/>(client.py)"]
+    C --> C6["OpenList 自动刷新<br/>(client.py + test_auto_refresh.py)"]
 
     style A fill:#f9f9f9,stroke:#333,stroke-width:2px
     style B fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
     style C fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    style B5 fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
+    style C6 fill:#c8e6c9,stroke:#388e3c,stroke-width:2px
 
     click B "./wopan-sdk-go/CLAUDE.md" "查看 Go SDK 模块文档"
     click C "./wopan-sdk-python/CLAUDE.md" "查看 Python SDK 模块文档"
@@ -85,8 +89,8 @@ graph TD
 
 | 模块路径 | 职责描述 | 语言 | 入口文件 | 测试 | 状态 |
 |----------|----------|------|----------|------|------|
-| `wopan-sdk-go` | 联通沃盘 Go SDK - 提供完整的文件管理和上传功能 | Go | `client.go` | 4 个测试文件 | 已实现 |
-| `wopan-sdk-python` | 联通沃盘 Python SDK - 支持同步/异步调用 | Python | `client.py` | 2 个测试文件 | 已实现 |
+| `wopan-sdk-go` | 联通沃盘 Go SDK - 提供完整的文件管理和上传功能 | Go | `client.go` | 5 个测试文件 | 已实现 |
+| `wopan-sdk-python` | 联通沃盘 Python SDK - 支持同步/异步调用 | Python | `client.py` | 3 个测试文件 | 已实现 |
 
 ---
 
@@ -142,6 +146,7 @@ flake8 wopan_sdk/
 | `crypto_test.go` | 加密/解密功能测试 |
 | `upload_test.go` | 文件上传功能测试 |
 | `client_openlist_test.go` | OpenList 管理后台认证测试 |
+| `refresh_token_test.go` | **OpenList 自动刷新功能完整测试**（新增） |
 
 ### Python SDK 测试
 
@@ -149,6 +154,7 @@ flake8 wopan_sdk/
 |----------|----------|
 | `tests/test_basic.py` | 加密、客户端初始化、文件类型检测等基础功能 |
 | `tests/test_openlist.py` | OpenList 管理后台认证测试 |
+| `tests/test_auto_refresh.py` | **OpenList 自动刷新功能完整测试**（新增） |
 
 ### 测试运行命令
 
@@ -224,7 +230,7 @@ def new_file_operation(self: WoClient, param: dict) -> ResponseData:
 - **家庭空间** (`SPACE_TYPE_FAMILY` / `"1"`): 需要提供 `familyId` 参数
 - **私有空间** (`SPACE_TYPE_PRIVATE` / `"4"`): 需要先设置 `psToken`
 
-#### 使用 OpenList 管理后台认证
+#### 使用 OpenList 管理后台认证与自动刷新
 
 ```go
 // Go 示例
@@ -235,6 +241,9 @@ client, err := wopan.DefaultWithOpenlist(wopan.OpenlistConfig{
 if err != nil {
     log.Fatal(err)
 }
+
+// SDK 会自动在 token 过期时调用 RefreshToken() 从 OpenList 获取新 token
+// 无需手动处理 token 刷新逻辑
 ```
 
 ```python
@@ -245,6 +254,9 @@ client = WoClient.default_with_openlist(OpenlistConfig(
     admin_token="your-admin-token",
     storage_id=1
 ))
+
+# SDK 会自动在 API 返回 9999 错误时刷新 token 并重试请求
+# 无需手动处理 token 刷新逻辑
 ```
 
 ---
@@ -258,6 +270,8 @@ DefaultZoneURL      = "https://tjupload.pan.wo.cn"
 DefaultClientID     = "1001000021"
 DefaultClientSecret = "XFmi9GS2hzk98jGX"
 DefaultPartSize     = 8 * 1024 * 1024  // 8MB
+DefaultOpenlistBaseURL = "https://openlist.example.com"  // OpenList API 地址
+OpenlistTimeout     = 30  // OpenList 请求超时时间（秒）
 ```
 
 ```python
@@ -267,6 +281,8 @@ DEFAULT_ZONE_URL = "https://tjupload.pan.wo.cn"
 DEFAULT_CLIENT_ID = "1001000021"
 DEFAULT_CLIENT_SECRET = "XFmi9GS2hzk98jGX"
 DEFAULT_PART_SIZE = 8 * 1024 * 1024  # 8MB
+DEFAULT_OPENLIST_BASE_URL = "https://openlist.example.com"  # OpenList API 地址
+DEFAULT_OPENLIST_TIMEOUT = 30  # OpenList 请求超时时间（秒）
 ```
 
 ---
@@ -286,7 +302,7 @@ DEFAULT_PART_SIZE = 8 * 1024 * 1024  # 8MB
 
 ## OpenList 管理后台 API
 
-项目新增对 OpenList 管理后台的认证支持，允许通过管理后台 API 获取访问令牌。
+项目新增对 OpenList 管理后台的认证支持，允许通过管理后台 API 获取访问令牌，并支持自动刷新机制。
 
 ### API 端点
 
@@ -314,6 +330,15 @@ Authorization: {admin_token}
   }
 }
 ```
+
+### 自动刷新机制
+
+- **触发条件**：当 API 返回错误码 `9999`（令牌过期）时
+- **刷新策略**：
+  1. 优先使用 OpenList 配置自动刷新
+  2. 如果没有 OpenList 配置，则调用用户设置的回调函数
+  3. 使用锁机制防止并发刷新
+- **线程安全**：Go 使用 `sync.Mutex`，Python 使用 `threading.Lock`
 
 详细文档请参考 [openlist-api.md](./openlist-api.md)。
 

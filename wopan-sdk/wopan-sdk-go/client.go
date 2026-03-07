@@ -30,6 +30,11 @@ type WoClient struct {
 	ClassifyRuleData *ClassifyRuleData
 
 	onRefreshToken func(accessToken, refreshToken string)
+
+	// openlistConfig 存储 OpenList 配置，用于自动刷新 access_token
+	openlistConfig *OpenlistConfig
+	// refreshingLock 用于防止并发刷新
+	refreshingLock sync.Mutex
 }
 
 func New(opts ...Option) *WoClient {
@@ -283,6 +288,10 @@ func DefaultWithOpenlist(config OpenlistConfig) (*WoClient, error) {
 	// 使用获取到的 access_token 初始化 WoClient
 	w := Default()
 	w.SetAccessToken(tokenResp.Data.TokenInfo.AccessToken)
+
+	// 缓存 OpenList 配置，用于后续自动刷新
+	w.openlistConfig = &config
+
 	return w, nil
 }
 
