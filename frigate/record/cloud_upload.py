@@ -486,16 +486,20 @@ class CloudUploadManager(threading.Thread):
         根据 cloud_retain_days 配置删除超过保留期的云端文件
         """
         if self.config.cloud_retain_days <= 0:
+            logger.debug(f"Cleanup skipped: cloud_retain_days={self.config.cloud_retain_days} <= 0")
             return
 
         if not self._init_client():
+            logger.warning("Cleanup skipped: failed to initialize wopan client")
             return
 
         try:
-            # 计算过期时间点
+            # 计算过期时间点（使用 UTC 时间以确保与数据库时间一致）
             expire_before = (
-                datetime.datetime.now() - datetime.timedelta(days=self.config.cloud_retain_days)
+                datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(days=self.config.cloud_retain_days)
             ).timestamp()
+
+            logger.info(f"Checking for expired cloud files before {datetime.datetime.fromtimestamp(expire_before, tz=datetime.timezone.utc)} (retain_days={self.config.cloud_retain_days})")
 
             # 查询需要清理的录像记录
             expired_recordings = Recordings.select().where(
@@ -503,6 +507,13 @@ class CloudUploadManager(threading.Thread):
                 (Recordings.cloud_upload_status == CLOUD_UPLOAD_SUCCESS) &
                 (Recordings.cloud_fid.is_null(False))
             )
+
+            count = expired_recordings.count()
+            if count == 0:
+                logger.debug("No expired cloud files to clean up")
+                return
+
+            logger.info(f"Found {count} expired cloud files to clean up")
 
             deleted_count = 0
             for rec in expired_recordings:
@@ -516,22 +527,127 @@ class CloudUploadManager(threading.Thread):
                         )
                         deleted_count += 1
 
-                        # 更新数据库状态
-                        Recordings.update(
-                            cloud_upload_status="deleted",
-                            cloud_fid=None,
-                        ).where(Recordings.id == rec.id).execute()
+                        # 删除数据库记录（本地文件和云端文件都已删除，记录不再需要）
+                        Recordings.delete().where(Recordings.id == rec.id).execute()
 
-                        logger.debug(f"Deleted expired cloud file: {rec.cloud_fid}")
+                        logger.info(f"Deleted expired cloud file and database record: {rec.cloud_fid} (recording: {rec.id})")
 
                 except Exception as e:
                     logger.warning(f"Failed to delete cloud file {rec.cloud_fid}: {e}")
 
             if deleted_count > 0:
-                logger.info(f"Cleaned up {deleted_count} expired cloud files")
+                logger.info(f"Successfully cleaned up {deleted_count}/{count} expired cloud files")
+
+                # 清理空文件夹（在删除文件后执行）
+                self._cleanup_empty_cloud_directories()
+            else:
+                logger.warning(f"Failed to delete any of the {count} expired cloud files")
 
         except Exception as e:
-            logger.error(f"Failed to cleanup expired cloud files: {e}")
+            logger.error(f"Failed to cleanup expired cloud files: {e}", exc_info=True)
+
+    def _cleanup_empty_cloud_directories(self) -> None:
+        """
+        清理云端空文件夹
+
+        从最深的子目录开始，向上递归删除空文件夹
+        保留根目录（uploadDirID）
+        """
+        if not self._init_client():
+            return
+
+        if not self.uploadDirID:
+            logger.warning("No upload directory ID set, skipping empty directory cleanup")
+            return
+
+        try:
+            # 获取所有目录（递归）
+            empty_dirs = self._find_empty_directories(self.uploadDirID)
+
+            if not empty_dirs:
+                logger.debug("No empty cloud directories to clean up")
+                return
+
+            # 批量删除空文件夹（每次最多删除100个）
+            max_batch_size = 100
+            deleted_dirs = 0
+
+            for i in range(0, len(empty_dirs), max_batch_size):
+                batch = empty_dirs[i:i + max_batch_size]
+                try:
+                    self._client.delete_file(
+                        space_type=SPACE_TYPE_PERSONAL,
+                        dir_list=batch,
+                        file_list=[],
+                    )
+                    deleted_dirs += len(batch)
+                except Exception as e:
+                    logger.warning(f"Failed to delete empty cloud directories batch {i//max_batch_size + 1}: {e}")
+
+            if deleted_dirs > 0:
+                logger.info(f"Cleaned up {deleted_dirs} empty cloud directories")
+
+        except Exception as e:
+            logger.error(f"Failed to cleanup empty cloud directories: {e}", exc_info=True)
+
+    def _find_empty_directories(self, parent_dir_id: str) -> list[str]:
+        """
+        递归查找所有空文件夹
+
+        Args:
+            parent_dir_id: 父目录ID
+
+        Returns:
+            空文件夹ID列表（从深到浅排序）
+        """
+        empty_dirs = []
+
+        try:
+            # 查询子目录和文件
+            result = self._client.query_all_files_personal(
+                parent_directory_id=parent_dir_id,
+                page_num=1,
+                page_size=1000,  # 获取更多结果以减少请求次数
+                sort_rule=1,  # 按名称排序
+            )
+
+            if not result or not result.files:
+                # 当前目录为空
+                return [parent_dir_id]
+
+            # 分离文件和目录
+            files = []
+            directories = []
+            for item in result.files:
+                if item.type == 1:  # 文件
+                    files.append(item)
+                elif item.type == 0:  # 目录
+                    directories.append(item)
+
+            # 如果有文件，目录不为空
+            if files:
+                return []
+
+            # 递归检查子目录
+            all_subdirs_empty = True
+            for dir_item in directories:
+                sub_empty_dirs = self._find_empty_directories(dir_item.id)
+                if not sub_empty_dirs:
+                    # 子目录不为空
+                    all_subdirs_empty = False
+                else:
+                    # 子目录为空，添加到待删除列表
+                    empty_dirs.extend(sub_empty_dirs)
+
+            # 如果所有子目录都为空，当前目录也可以删除
+            if all_subdirs_empty:
+                empty_dirs.append(parent_dir_id)
+
+            return empty_dirs
+
+        except Exception as e:
+            logger.warning(f"Failed to query directory {parent_dir_id} for empty cleanup: {e}")
+            return []
 
     def run(self) -> None:
         """主循环: 处理上传队列和定期清理"""

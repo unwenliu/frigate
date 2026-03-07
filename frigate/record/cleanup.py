@@ -198,13 +198,42 @@ class RecordingCleanup(threading.Thread):
 
         # expire recordings
         logger.debug(f"Expiring {len(deleted_recordings)} recordings")
-        # delete up to 100,000 at a time
-        max_deletes = 100000
-        deleted_recordings_list = list(deleted_recordings)
-        for i in range(0, len(deleted_recordings_list), max_deletes):
-            Recordings.delete().where(
-                Recordings.id << deleted_recordings_list[i : i + max_deletes]
-            ).execute()
+
+        # 分离出已上传到云端的记录
+        # 这些记录需要保留，以便云端清理逻辑能正常工作
+        # 因为云端清理依赖数据库记录中的 cloud_fid 来删除云端文件
+        recordings_to_check = list(deleted_recordings)
+        cloud_uploaded_recordings = []
+        local_only_recordings = []
+
+        if recordings_to_check:
+            # 查询哪些记录已经上传到云端
+            cloud_recordings = Recordings.select(Recordings.id).where(
+                Recordings.id << recordings_to_check,
+                Recordings.cloud_upload_status == 'success',
+                Recordings.cloud_fid.is_null(False)
+            )
+            cloud_uploaded_ids = {r.id for r in cloud_recordings}
+
+            for recording_id in recordings_to_check:
+                if recording_id in cloud_uploaded_ids:
+                    cloud_uploaded_recordings.append(recording_id)
+                else:
+                    local_only_recordings.append(recording_id)
+
+        # 对于已上传到云端的记录，保留数据库记录（只删除本地文件）
+        # 这样云端清理逻辑仍然可以找到这些记录并删除对应的云端文件
+        if cloud_uploaded_recordings:
+            logger.debug(f"Keeping {len(cloud_uploaded_recordings)} cloud-uploaded recording records for cloud cleanup (local files only were removed)")
+
+        # 对于只在本地的记录，完全删除数据库记录
+        if local_only_recordings:
+            # delete up to 100,000 at a time
+            max_deletes = 100000
+            for i in range(0, len(local_only_recordings), max_deletes):
+                Recordings.delete().where(
+                    Recordings.id << local_only_recordings[i : i + max_deletes]
+                ).execute()
 
         previews: list[Previews] = (
             Previews.select(
@@ -296,14 +325,39 @@ class RecordingCleanup(threading.Thread):
             Path(recording.path).unlink(missing_ok=True)
             deleted_recordings.add(recording.id)
 
-        logger.debug(f"Expiring {len(deleted_recordings)} recordings")
-        # delete up to 100,000 at a time
-        max_deletes = 100000
-        deleted_recordings_list = list(deleted_recordings)
-        for i in range(0, len(deleted_recordings_list), max_deletes):
-            Recordings.delete().where(
-                Recordings.id << deleted_recordings_list[i : i + max_deletes]
-            ).execute()
+        logger.debug(f"Expiring {len(deleted_recordings)} recordings from deleted cameras")
+
+        # 分离出已上传到云端的记录
+        recordings_to_check = list(deleted_recordings)
+        cloud_uploaded_recordings = []
+        local_only_recordings = []
+
+        if recordings_to_check:
+            # 查询哪些记录已经上传到云端
+            cloud_recordings = Recordings.select(Recordings.id).where(
+                Recordings.id << recordings_to_check,
+                Recordings.cloud_upload_status == 'success',
+                Recordings.cloud_fid.is_null(False)
+            )
+            cloud_uploaded_ids = {r.id for r in cloud_recordings}
+
+            for recording_id in recordings_to_check:
+                if recording_id in cloud_uploaded_ids:
+                    cloud_uploaded_recordings.append(recording_id)
+                else:
+                    local_only_recordings.append(recording_id)
+
+        # 对于已上传到云端的记录，保留数据库记录
+        if cloud_uploaded_recordings:
+            logger.debug(f"Keeping {len(cloud_uploaded_recordings)} cloud-uploaded recording records from deleted cameras for cloud cleanup")
+
+        # 对于只在本地的记录，完全删除
+        if local_only_recordings:
+            max_deletes = 100000
+            for i in range(0, len(local_only_recordings), max_deletes):
+                Recordings.delete().where(
+                    Recordings.id << local_only_recordings[i : i + max_deletes]
+                ).execute()
         logger.debug("End deleted cameras.")
 
         logger.debug("Start all cameras.")
