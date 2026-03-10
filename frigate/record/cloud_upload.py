@@ -568,6 +568,13 @@ class CloudUploadManager(threading.Thread):
                 logger.debug("No empty cloud directories to clean up")
                 return
 
+            # 排除根目录（uploadDirID），避免删除用户指定的上传目录
+            empty_dirs = [d for d in empty_dirs if d != self.uploadDirID]
+
+            if not empty_dirs:
+                logger.debug("No empty cloud subdirectories to clean up (root directory excluded)")
+                return
+
             # 批量删除空文件夹（每次最多删除100个）
             max_batch_size = 100
             deleted_dirs = 0
