@@ -44,7 +44,9 @@ func (w *WoClient) request(channel string, key string, param, other Json, resp i
 	}
 
 	if _resp.Rsp.RspCode != "0000" {
-		if channel != ChannelAPIUser && retry && _resp.Rsp.RspCode == "9999" {
+		// 如果是认证相关错误（令牌过期、无效登录信息等）且允许重试，则刷新令牌后重试
+		// 只针对明确的认证错误码进行刷新，避免不必要的刷新
+		if channel != ChannelAPIUser && retry && (_resp.Rsp.RspCode == "9999" || _resp.Rsp.RspCode == "1001") {
 			err := w.RefreshToken()
 			if err != nil {
 				return res.Body(), err

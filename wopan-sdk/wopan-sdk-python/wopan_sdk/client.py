@@ -380,11 +380,12 @@ class WoClient:
             allowed = allowed_codes or ["0000"]
 
             if rsp_code not in allowed:
-                # 如果是令牌过期且允许重试，则刷新令牌后重试
+                # 如果是认证相关错误（令牌过期、无效登录信息等）且允许重试，则刷新令牌后重试
+                # 只针对明确的认证错误码进行刷新，避免不必要的刷新
                 if (
                     retry
                     and channel != CHANNEL_API_USER
-                    and rsp_code == "9999"
+                    and rsp_code in ("9999", "1001")  # 9999=令牌过期, 1001=无效登录信息
                 ):
                     self._refresh_token()
                     return self._request(channel, key, param, other, resp_class, False, allowed_codes)
