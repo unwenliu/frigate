@@ -479,6 +479,37 @@ class CloudUploadManager(threading.Thread):
             )
             return False
 
+    def _build_cloud_path_from_recording(self, rec) -> str:
+        """
+        从录像记录构建云存储路径
+
+        Args:
+            rec: Recordings 模型实例
+
+        Returns:
+            云存储绝对路径（包含目录名称）
+        """
+        # 计算云端路径（移除本地前缀,保留相对路径）
+        if rec.path.startswith(RECORD_DIR):
+            cloud_path = rec.path[len(RECORD_DIR):]
+        else:
+            cloud_path = rec.path
+
+        # 确保以 / 开头
+        if not cloud_path.startswith("/"):
+            cloud_path = "/" + cloud_path
+
+        # 将 UTC 时间路径转换为本地时区路径
+        cloud_path = self._convert_utc_path_to_local(cloud_path)
+
+        # 将摄像头内部名称替换为 friendly_name
+        cloud_path = self._replace_camera_with_friendly_name(cloud_path)
+
+        # 添加云存储目录名称作为根路径
+        upload_dir_name = self.config.upload_dir_name or "frigate"
+
+        return f"/{upload_dir_name}{cloud_path}"
+
     def _cleanup_expired_cloud_files(self) -> None:
         """
         清理过期的云端文件
@@ -520,6 +551,9 @@ class CloudUploadManager(threading.Thread):
                 try:
                     # 删除云端文件
                     if rec.cloud_fid:
+                        # 构建云存储路径用于日志输出
+                        cloud_path = self._build_cloud_path_from_recording(rec)
+
                         self._client.delete_file(
                             space_type=SPACE_TYPE_PERSONAL,
                             dir_list=[],
@@ -530,10 +564,11 @@ class CloudUploadManager(threading.Thread):
                         # 删除数据库记录（本地文件和云端文件都已删除，记录不再需要）
                         Recordings.delete().where(Recordings.id == rec.id).execute()
 
-                        logger.info(f"Deleted expired cloud file and database record: {rec.cloud_fid} (recording: {rec.id})")
+                        logger.info(f"Deleted expired cloud file and database record: {cloud_path} (fid: {rec.cloud_fid}, recording: {rec.id})")
 
                 except Exception as e:
-                    logger.warning(f"Failed to delete cloud file {rec.cloud_fid}: {e}")
+                    cloud_path = self._build_cloud_path_from_recording(rec)
+                    logger.warning(f"Failed to delete cloud file {cloud_path} (fid: {rec.cloud_fid}): {e}")
 
             if deleted_count > 0:
                 logger.info(f"Successfully cleaned up {deleted_count}/{count} expired cloud files")
