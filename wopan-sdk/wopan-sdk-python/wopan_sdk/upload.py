@@ -157,6 +157,22 @@ class UploadMixin:
                     if opt.on_retry:
                         opt.on_retry(e, file.name, part_index, finished_size)
 
+                    # 检查是否为认证错误（401 Unauthorized），如果是则刷新 token
+                    error_str = str(e).lower()
+                    if "401" in error_str or "unauthorized" in error_str or "1001" in error_str:
+                        # 如果有 OpenList 配置，刷新 token
+                        if hasattr(self, '_openlist_config') and self._openlist_config:
+                            try:
+                                # 调用刷新 token 方法（保留会话和缓存）
+                                self._refresh_token()
+                                # 更新 form_data 中的 access_token
+                                form_data["accessToken"] = self.access_token
+                                if self.debug:
+                                    print(f"[DEBUG] Refreshed access_token from OpenList")
+                            except Exception as refresh_error:
+                                if self.debug:
+                                    print(f"[DEBUG] Failed to refresh token: {refresh_error}")
+
                     # 重置文件指针
                     file.content.seek(finished_size)
                     try:
