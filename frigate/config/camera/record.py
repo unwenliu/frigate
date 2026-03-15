@@ -161,8 +161,9 @@ class CloudUploadConfig(FrigateBaseModel):
         default=10,
         title="最大重试次数"
     )
-    cloud_retain_days: int = Field(
-        default=30,
+    cloud_retain_days: float = Field(
+        default=30.0,
+        ge=0,
         title="云端保留天数"
     )
     cleanup_interval: int = Field(

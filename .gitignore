@@ -21,3 +21,4 @@ core
 .idea/*
 .ipynb_checkpoints
 prod/*
+.zcf/*

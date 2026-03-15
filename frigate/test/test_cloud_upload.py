@@ -46,7 +46,7 @@ class TestCloudUploadConfig(unittest.TestCase):
         self.assertEqual(config.retry_times, 3)
         self.assertEqual(config.retry_interval, 60)
         self.assertEqual(config.max_retry_count, 10)
-        self.assertEqual(config.cloud_retain_days, 30)
+        self.assertEqual(config.cloud_retain_days, 30.0)
         self.assertEqual(config.cleanup_interval, 60)
 
     def test_custom_config(self):
@@ -59,7 +59,7 @@ class TestCloudUploadConfig(unittest.TestCase):
             retry_times=5,
             retry_interval=30,
             max_retry_count=20,
-            cloud_retain_days=60,
+            cloud_retain_days=60.0,
             cleanup_interval=120,
         )
         self.assertTrue(config.enabled)
@@ -69,7 +69,7 @@ class TestCloudUploadConfig(unittest.TestCase):
         self.assertEqual(config.retry_times, 5)
         self.assertEqual(config.retry_interval, 30)
         self.assertEqual(config.max_retry_count, 20)
-        self.assertEqual(config.cloud_retain_days, 60)
+        self.assertEqual(config.cloud_retain_days, 60.0)
         self.assertEqual(config.cleanup_interval, 120)
 
 
