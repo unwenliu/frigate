@@ -279,12 +279,14 @@ class CloudUploadManager(threading.Thread):
         return cloud_path
 
     def _update_recording_status(self, recording_id: str, status: str,
-                                  cloud_fid: str = "", error: str = "") -> None:
+                                  cloud_fid: str = "", cloud_dir_id: str = "", error: str = "") -> None:
         """更新录像的云上传状态"""
         try:
             update_data = {"cloud_upload_status": status}
             if cloud_fid:
                 update_data["cloud_fid"] = cloud_fid
+            if cloud_dir_id:
+                update_data["cloud_dir_id"] = cloud_dir_id
             if error:
                 update_data["cloud_upload_error"] = error
 
@@ -335,19 +337,32 @@ class CloudUploadManager(threading.Thread):
         """
         确保云盘目录存在,返回目录ID
 
+        从根目录（uploadDirID）开始，逐级检查并创建目录结构。
+        使用缓存避免重复查询，提高性能。
+
         Args:
-            cloud_dir: 云端目录路径 (如 /recordings/2024-01-15/14/front_door)
+            cloud_dir: 云端目录路径，相对于根目录
+                      (如 "2024-01-15/14/front_door")
+                      支持带或不带前导/尾随斜杠
 
         Returns:
-            目录ID,失败返回None
+            目录ID（最终目录的ID），失败返回None
+
+        Example:
+            >>> dir_id = self._ensure_cloud_directory("2024-01-15/14/front_door")
+            >>> # 返回 front_door 目录的 ID，而不是 2024-01-15 的 ID
         """
+        logger.debug(f"_ensure_cloud_directory called with: '{cloud_dir}'")
+
         root_dir_id = self._get_or_create_root_dir()
         if not root_dir_id:
             return None
 
-        # 检查缓存
-        if cloud_dir in self._dir_cache:
-            return self._dir_cache[cloud_dir]
+        # 规范化缓存键：移除前导和尾随斜杠，确保缓存键格式一致
+        cache_key_full = cloud_dir.strip("/")
+        if cache_key_full in self._dir_cache:
+            logger.debug(f"Cache hit for '{cloud_dir}' -> {self._dir_cache[cache_key_full]}")
+            return self._dir_cache[cache_key_full]
 
         if not self._init_client():
             return None
@@ -357,11 +372,13 @@ class CloudUploadManager(threading.Thread):
             parts = [p for p in cloud_dir.split("/") if p]
             current_dir_id = root_dir_id
 
-            for part in parts:
-                cache_key = "/".join(parts[:parts.index(part)+1])
+            for i, part in enumerate(parts):
+                # 修复：使用枚举索引而不是 parts.index(part)，正确处理重复目录名
+                cache_key = "/".join(parts[:i+1])
 
                 if cache_key in self._dir_cache:
                     current_dir_id = self._dir_cache[cache_key]
+                    logger.debug(f"Cache hit for partial path '{cache_key}' -> {current_dir_id}")
                     continue
 
                 # 查找或创建子目录
@@ -378,6 +395,7 @@ class CloudUploadManager(threading.Thread):
                         if f.name == part and f.type == 0:  # type=0 表示目录
                             current_dir_id = f.id
                             found = True
+                            logger.debug(f"Found existing directory: {part} -> {current_dir_id}")
                             break
 
                 # 目录不存在,创建
@@ -394,9 +412,12 @@ class CloudUploadManager(threading.Thread):
                         logger.error(f"Failed to create directory: {part}")
                         return None
 
-                # 缓存结果
+                # 缓存结果（使用规范化的缓存键，不带前导斜杠）
                 self._dir_cache[cache_key] = current_dir_id
 
+            # 缓存完整路径
+            self._dir_cache[cache_key_full] = current_dir_id
+            logger.debug(f"_ensure_cloud_directory returning: {current_dir_id} for '{cloud_dir}'")
             return current_dir_id
 
         except Exception as e:
@@ -467,7 +488,7 @@ class CloudUploadManager(threading.Thread):
                 )
 
                 self._update_recording_status(
-                    task.recording_id, CLOUD_UPLOAD_SUCCESS, cloud_fid=fid
+                    task.recording_id, CLOUD_UPLOAD_SUCCESS, cloud_fid=fid, cloud_dir_id=dir_id
                 )
                 logger.info(f"Successfully uploaded: {task.file_path} -> fid={fid}")
                 return True
@@ -510,6 +531,42 @@ class CloudUploadManager(threading.Thread):
 
         return f"/{upload_dir_name}{cloud_path}"
 
+    def _get_file_id_by_name(self, parent_dir_id: str, file_name: str) -> Optional[str]:
+        """
+        根据目录ID和文件名查询文件ID
+
+        Args:
+            parent_dir_id: 父目录ID
+            file_name: 文件名
+
+        Returns:
+            文件ID，未找到返回 None
+        """
+        if not self._init_client():
+            return None
+
+        try:
+            # 查询目录下的所有文件
+            result = self._client.query_all_files_personal(
+                parent_directory_id=parent_dir_id,
+                page_num=1,
+                page_size=100,
+            )
+
+            if not result or not hasattr(result, 'files'):
+                return None
+
+            # 查找匹配的文件
+            for item in result.files:
+                if item.name == file_name and item.type == 1:  # type=1 表示文件
+                    return item.id
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to query file ID for '{file_name}' in directory {parent_dir_id}: {e}")
+            return None
+
     def _cleanup_expired_cloud_files(self) -> None:
         """
         清理过期的云端文件
@@ -536,7 +593,7 @@ class CloudUploadManager(threading.Thread):
             expired_recordings = Recordings.select().where(
                 (Recordings.end_time < expire_before) &
                 (Recordings.cloud_upload_status == CLOUD_UPLOAD_SUCCESS) &
-                (Recordings.cloud_fid.is_null(False))
+                (Recordings.cloud_dir_id.is_null(False))
             )
 
             count = expired_recordings.count()
@@ -550,25 +607,35 @@ class CloudUploadManager(threading.Thread):
             for rec in expired_recordings:
                 try:
                     # 删除云端文件
-                    if rec.cloud_fid:
-                        # 构建云存储路径用于日志输出
-                        cloud_path = self._build_cloud_path_from_recording(rec)
+                    if rec.cloud_dir_id:
+                        # 从本地路径提取文件名
+                        file_name = os.path.basename(rec.path)
+                        
+                        # 查询云端文件ID
+                        file_id = self._get_file_id_by_name(rec.cloud_dir_id, file_name)
+                        
+                        if file_id:
+                            # 构建云存储路径用于日志输出
+                            cloud_path = self._build_cloud_path_from_recording(rec)
 
-                        self._client.delete_file(
-                            space_type=SPACE_TYPE_PERSONAL,
-                            dir_list=[],
-                            file_list=[rec.cloud_fid],
-                        )
-                        deleted_count += 1
+                            self._client.delete_file(
+                                space_type=SPACE_TYPE_PERSONAL,
+                                dir_list=[],
+                                file_list=[file_id],
+                            )
+                            deleted_count += 1
 
-                        # 删除数据库记录（本地文件和云端文件都已删除，记录不再需要）
-                        Recordings.delete().where(Recordings.id == rec.id).execute()
+                            # 删除数据库记录（本地文件和云端文件都已删除，记录不再需要）
+                            Recordings.delete().where(Recordings.id == rec.id).execute()
 
-                        logger.info(f"Deleted expired cloud file and database record: {cloud_path} (fid: {rec.cloud_fid}, recording: {rec.id})")
+                            logger.info(f"Deleted expired cloud file and database record: {cloud_path} (file_id: {file_id}, recording: {rec.id})")
+                        else:
+                            cloud_path = self._build_cloud_path_from_recording(rec)
+                            logger.warning(f"Failed to find file ID for {cloud_path} (file_name: {file_name}, dir_id: {rec.cloud_dir_id})")
 
                 except Exception as e:
                     cloud_path = self._build_cloud_path_from_recording(rec)
-                    logger.warning(f"Failed to delete cloud file {cloud_path} (fid: {rec.cloud_fid}): {e}")
+                    logger.warning(f"Failed to delete cloud file {cloud_path} (recording: {rec.id}): {e}")
 
             if deleted_count > 0:
                 logger.info(f"Successfully cleaned up {deleted_count}/{count} expired cloud files")

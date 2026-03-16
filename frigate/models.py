@@ -81,6 +81,7 @@ class Recordings(Model):
     # Cloud upload related fields
     cloud_upload_status = CharField(default="pending", max_length=20, index=True)
     cloud_fid = CharField(null=True, max_length=64)  # Cloud file ID
+    cloud_dir_id = CharField(null=True, max_length=64)  # Cloud directory ID
     cloud_upload_error = TextField(null=True)  # Upload error message
 
 
