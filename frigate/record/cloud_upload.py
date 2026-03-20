@@ -148,7 +148,7 @@ class CloudUploadManager(threading.Thread):
             # 查询当前目录下的所有文件和文件夹
             result = self._client.query_all_files_personal(
                 parent_directory_id=parent_dir_id,
-                page_num=1,
+                page_num=0,
                 page_size=100,
             )
 
@@ -309,7 +309,7 @@ class CloudUploadManager(threading.Thread):
             # 尝试查找 frigate 目录
             result = self._client.query_all_files_personal(
                 parent_directory_id="0",  # 根目录
-                page_num=1,
+                page_num=0,
                 page_size=100,
             )
 
@@ -384,7 +384,7 @@ class CloudUploadManager(threading.Thread):
                 # 查找或创建子目录
                 result = self._client.query_all_files_personal(
                     parent_directory_id=current_dir_id,
-                    page_num=1,
+                    page_num=0,
                     page_size=100,
                 )
 
@@ -549,7 +549,7 @@ class CloudUploadManager(threading.Thread):
             # 查询目录下的所有文件
             result = self._client.query_all_files_personal(
                 parent_directory_id=parent_dir_id,
-                page_num=1,
+                page_num=0,
                 page_size=100,
             )
 
@@ -715,7 +715,7 @@ class CloudUploadManager(threading.Thread):
             # 查询子目录和文件
             result = self._client.query_all_files_personal(
                 parent_directory_id=parent_dir_id,
-                page_num=1,
+                page_num=0,
                 page_size=1000,  # 获取更多结果以减少请求次数
                 sort_rule=1,  # 按名称排序
             )
