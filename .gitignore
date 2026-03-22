@@ -22,3 +22,4 @@ core
 .ipynb_checkpoints
 prod/*
 .zcf/*
+.claude

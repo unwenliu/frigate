@@ -7,6 +7,7 @@ import { Preview } from "@/types/preview";
 import PreviewPlayer, { PreviewController } from "../PreviewPlayer";
 import { DynamicVideoController } from "./DynamicVideoController";
 import HlsVideoPlayer, { HlsSource } from "../HlsVideoPlayer";
+import { CloudRecordingIndicator } from "../CloudRecordingIndicator";
 import { useDetailStream } from "@/context/detail-stream-context";
 import { TimeRange } from "@/types/timeline";
 import ActivityIndicator from "@/components/indicators/activity-indicator";
@@ -186,6 +187,12 @@ export default function DynamicVideoPlayer({
     { revalidateOnFocus: false },
   );
 
+  // 检查是否有云端录像
+  const hasCloudSource = useMemo(() => {
+    if (!recordings) return false;
+    return recordings.some((rec) => rec.source === "cloud");
+  }, [recordings]);
+
   useEffect(() => {
     if (!recordings?.length) {
       if (recordings?.length == 0) {
@@ -329,7 +336,21 @@ export default function DynamicVideoPlayer({
         }
       />
       {!isScrubbing && (isLoading || isBuffering) && !noRecording && (
-        <ActivityIndicator className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />
+        <div className="absolute left-1/2 top-1/2 flex flex-col items-center gap-2 -translate-x-1/2 -translate-y-1/2">
+          <ActivityIndicator className="" />
+          {hasCloudSource && (
+            <div className="text-sm text-secondary-foreground">
+              {t("loadingFromCloudStorage", "Loading from cloud storage...")}
+            </div>
+          )}
+        </div>
+      )}
+      {hasCloudSource && !isLoading && !isScrubbing && (
+        <CloudRecordingIndicator
+          hasCloudSource={hasCloudSource}
+          isLoading={isBuffering}
+          className="absolute right-2 top-2 z-10"
+        />
       )}
       {!isScrubbing && !isLoading && noRecording && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">

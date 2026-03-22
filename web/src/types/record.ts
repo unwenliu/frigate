@@ -12,6 +12,10 @@ export type Recording = {
   motion: number;
   objects: number;
   dBFS: number;
+  // Cloud storage fields
+  in_cloud?: boolean;
+  local_exists?: boolean;
+  source?: 'local' | 'cloud';
 };
 
 export type RecordingSegment = {

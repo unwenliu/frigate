@@ -10,8 +10,9 @@ import time
 from datetime import datetime, timedelta, timezone
 from functools import reduce
 from pathlib import Path as FilePath
-from typing import Any, List
+from typing import Any, List, Optional
 from urllib.parse import unquote
+from fastapi import Header
 
 import cv2
 import numpy as np
@@ -53,6 +54,92 @@ from frigate.util.image import get_image_from_recording
 from frigate.util.time import get_dst_transitions
 
 logger = logging.getLogger(__name__)
+
+# 云存储 VOD 缓存配置
+CLOUD_VOD_CACHE_DIR = os.path.join(CACHE_DIR, "cloud_vod")
+CLOUD_VOD_CACHE_MAX_SIZE_MB = 5000  # 最大缓存大小 5GB
+CLOUD_VOD_CACHE_MAX_AGE_HOURS = 24  # 缓存文件最大保留时间 24小时
+
+
+def _clean_cloud_vod_cache(max_size_mb: int = None, max_age_hours: int = None):
+    """
+    清理云存储 VOD 缓存
+
+    Args:
+        max_size_mb: 最大缓存大小（MB），超过则清理最旧的文件
+        max_age_hours: 文件最大保留时间（小时），超过则删除
+    """
+    if not os.path.exists(CLOUD_VOD_CACHE_DIR):
+        return
+
+    max_size_mb = max_size_mb or CLOUD_VOD_CACHE_MAX_SIZE_MB
+    max_age_hours = max_age_hours or CLOUD_VOD_CACHE_MAX_AGE_HOURS
+
+    try:
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+
+        # 获取所有缓存文件及其信息
+        cache_files = []
+        total_size = 0
+
+        for filename in os.listdir(CLOUD_VOD_CACHE_DIR):
+            filepath = os.path.join(CLOUD_VOD_CACHE_DIR, filename)
+            if os.path.isfile(filepath):
+                stat = os.stat(filepath)
+                cache_files.append({
+                    'path': filepath,
+                    'size': stat.st_size,
+                    'mtime': stat.st_mtime,
+                    'atime': stat.st_atime,
+                })
+                total_size += stat.st_size
+
+        # 按访问时间排序（最旧的在前面）
+        cache_files.sort(key=lambda x: x['atime'])
+
+        # 策略1: 删除超过最大年龄的文件
+        deleted_count = 0
+        deleted_size = 0
+        remaining_files = []
+
+        for file_info in cache_files:
+            age_hours = (current_time - file_info['atime']) / 3600
+            if age_hours > max_age_hours:
+                try:
+                    os.remove(file_info['path'])
+                    deleted_count += 1
+                    deleted_size += file_info['size']
+                    logger.debug(f"Cleaned old cache file: {file_info['path']} (age: {age_hours:.1f}h)")
+                except Exception as e:
+                    logger.warning(f"Failed to delete cache file {file_info['path']}: {e}")
+            else:
+                remaining_files.append(file_info)
+
+        # 更新总大小
+        total_size -= deleted_size
+
+        # 策略2: 如果总大小超过限制，删除最旧的文件
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if total_size > max_size_bytes:
+            for file_info in remaining_files:
+                if total_size <= max_size_bytes:
+                    break
+                try:
+                    os.remove(file_info['path'])
+                    total_size -= file_info['size']
+                    deleted_count += 1
+                    deleted_size += file_info['size']
+                    logger.debug(f"Cleaned cache file for size limit: {file_info['path']}")
+                except Exception as e:
+                    logger.warning(f"Failed to delete cache file {file_info['path']}: {e}")
+
+        if deleted_count > 0:
+            logger.info(f"Cloud VOD cache cleaned: {deleted_count} files, {deleted_size / 1024 / 1024:.1f} MB freed")
+
+    except Exception as e:
+        logger.error(f"Error cleaning cloud VOD cache: {e}")
+
 
 router = APIRouter(tags=[Tags.media])
 
@@ -616,7 +703,7 @@ async def recordings(
     before: float = datetime.now().timestamp(),
 ):
     """Return specific camera recordings between the given 'after'/'end' times. If not provided the last hour will be used"""
-    recordings = (
+    recording_records = (
         Recordings.select(
             Recordings.id,
             Recordings.start_time,
@@ -625,6 +712,9 @@ async def recordings(
             Recordings.motion,
             Recordings.objects,
             Recordings.duration,
+            Recordings.path,
+            Recordings.cloud_upload_status,
+            Recordings.cloud_fid,
         )
         .where(
             Recordings.camera == camera_name,
@@ -636,7 +726,26 @@ async def recordings(
         .iterator()
     )
 
-    return JSONResponse(content=list(recordings))
+    # 构建响应列表，添加云存储相关字段
+    result = []
+    for rec in recording_records:
+        local_exists = os.path.exists(rec['path']) if rec['path'] else False
+        in_cloud = rec['cloud_upload_status'] == 'success' and rec['cloud_fid'] is not None
+
+        result.append({
+            'id': rec['id'],
+            'start_time': rec['start_time'],
+            'end_time': rec['end_time'],
+            'segment_size': rec['segment_size'],
+            'motion': rec['motion'],
+            'objects': rec['objects'],
+            'duration': rec['duration'],
+            'in_cloud': in_cloud,
+            'local_exists': local_exists,
+            'source': 'cloud' if (not local_exists and in_cloud) else 'local',
+        })
+
+    return JSONResponse(content=result)
 
 
 @router.get(
@@ -838,6 +947,7 @@ async def recording_clip(
     description="Returns an HLS playlist for the specified timestamp-range on the specified camera. Append /master.m3u8 or /index.m3u8 for HLS playback.",
 )
 async def vod_ts(
+    request: Request,
     camera_name: str,
     start_ts: float,
     end_ts: float,
@@ -856,6 +966,9 @@ async def vod_ts(
             Recordings.duration,
             Recordings.end_time,
             Recordings.start_time,
+            Recordings.cloud_upload_status,
+            Recordings.cloud_fid,
+            Recordings.id,
         )
         .where(
             Recordings.start_time.between(start_ts, end_ts)
@@ -864,13 +977,25 @@ async def vod_ts(
         )
         .where(Recordings.camera == camera_name)
         .order_by(Recordings.start_time.asc())
-        .iterator()
     )
+
+    # 立即加载所有结果到内存，避免迭代时数据库连接超时关闭
+    recordings = list(recordings)
 
     clips = []
     durations = []
     min_duration_ms = 100  # Minimum 100ms to ensure at least one video frame
     max_duration_ms = MAX_SEGMENT_DURATION * 1000
+
+    # 初始化云存储服务
+    cloud_service = None
+    try:
+        from frigate.util.cloud import get_cloud_storage_service
+        cloud_service = get_cloud_storage_service(request.app.frigate_config)
+    except Exception as e:
+        logger.debug(f"CloudStorageService not available: {e}")
+
+    has_cloud_source = False
 
     recording: Recordings
     for recording in recordings:
@@ -882,7 +1007,73 @@ async def vod_ts(
             recording.duration,
         )
 
-        clip = {"type": "source", "path": recording.path}
+        # 检查本地文件是否存在
+        local_exists = os.path.exists(recording.path)
+
+        # 确定播放源
+        clip_path = None
+        if local_exists:
+            # 使用本地文件
+            clip_path = recording.path
+            logger.debug(f"VOD: using local file for {recording.id}: {clip_path}")
+        elif (cloud_service and
+              cloud_service.is_available() and
+              recording.cloud_upload_status == "success" and
+              recording.cloud_fid):
+            # 使用云端文件 - 下载到本地缓存
+            has_cloud_source = True
+
+            # 创建缓存目录
+            os.makedirs(CLOUD_VOD_CACHE_DIR, exist_ok=True)
+
+            # 使用 fid 作为缓存文件名（保留原始扩展名）
+            # fid 中可能包含 / 等特殊字符，需要转义
+            import hashlib
+            # 使用 fid 的 hash 作为文件名，避免特殊字符问题
+            fid_hash = hashlib.md5(recording.cloud_fid.encode()).hexdigest()
+            original_ext = os.path.splitext(recording.path)[1]
+            cache_file_name = f"{fid_hash}{original_ext}"
+            cache_file_path = os.path.join(CLOUD_VOD_CACHE_DIR, cache_file_name)
+
+            # 检查缓存是否存在
+            if os.path.exists(cache_file_path):
+                clip_path = cache_file_path
+                # 更新访问时间
+                os.utime(cache_file_path, None)
+                logger.debug(f"VOD: using cached cloud file for {recording.id}: {clip_path}")
+            else:
+                # 下载前先清理缓存（腾出空间）
+                _clean_cloud_vod_cache()
+
+                # 从云存储下载到缓存
+                download_url = cloud_service.get_download_url(recording.cloud_fid)
+                if download_url:
+                    try:
+                        import httpx
+
+                        logger.info(f"VOD: downloading cloud file for {recording.id} to cache...")
+                        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
+                            async with client.stream("GET", download_url) as response:
+                                response.raise_for_status()
+                                with open(cache_file_path, 'wb') as f:
+                                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                                        f.write(chunk)
+                        clip_path = cache_file_path
+                        logger.info(f"VOD: downloaded cloud file for {recording.id}: {clip_path}")
+                    except Exception as e:
+                        logger.error(f"VOD: failed to download cloud file for {recording.id}: {e}")
+                        continue
+                else:
+                    logger.warning(f"VOD: failed to get cloud URL for {recording.id}")
+                    continue
+        else:
+            logger.debug(f"VOD: skipping recording {recording.id} - not available locally or in cloud")
+            continue
+
+        if not clip_path:
+            continue
+
+        clip = {"type": "source", "path": clip_path}
         duration = int(recording.duration * 1000)
 
         # adjust start offset if start_ts is after recording.start_time
@@ -914,10 +1105,11 @@ async def vod_ts(
             clips.append(clip)
             durations.append(duration)
             logger.debug(
-                "VOD: added clip %s duration_ms=%s clipFrom=%s",
+                "VOD: added clip %s duration_ms=%s clipFrom=%s source=%s",
                 recording.path,
                 duration,
                 clip.get("clipFrom"),
+                "cloud" if has_cloud_source and clip_path != recording.path else "local",
             )
         else:
             logger.warning(f"Recording clip is missing or empty: {recording.path}")
@@ -938,8 +1130,8 @@ async def vod_ts(
     return JSONResponse(
         content={
             "cache": hour_ago.timestamp() > start_ts,
-            "discontinuity": force_discontinuity,
-            "consistentSequenceMediaInfo": True,
+            "discontinuity": force_discontinuity or has_cloud_source,
+            "consistentSequenceMediaInfo": not has_cloud_source,
             "durations": durations,
             "segment_duration": max(durations),
             "sequences": [{"clips": clips}],
@@ -1888,6 +2080,91 @@ def preview_thumbnail(file_name: str):
             "Cache-Control": "private, max-age=31536000",
         },
     )
+
+
+@router.post("/vod/clean_cache", dependencies=[Depends(allow_any_authenticated())])
+async def clean_cloud_vod_cache(
+    request: Request,
+    max_size_mb: int = None,
+    max_age_hours: int = None,
+):
+    """
+    手动清理云存储 VOD 缓存
+
+    Args:
+        max_size_mb: 最大缓存大小（MB），默认 5000MB
+        max_age_hours: 文件最大保留时间（小时），默认 24小时
+    """
+    try:
+        _clean_cloud_vod_cache(max_size_mb, max_age_hours)
+
+        # 获取缓存统计信息
+        cache_info = {
+            "cache_dir": CLOUD_VOD_CACHE_DIR,
+            "exists": os.path.exists(CLOUD_VOD_CACHE_DIR),
+        }
+
+        if cache_info["exists"]:
+            total_size = 0
+            file_count = 0
+            for filename in os.listdir(CLOUD_VOD_CACHE_DIR):
+                filepath = os.path.join(CLOUD_VOD_CACHE_DIR, filename)
+                if os.path.isfile(filepath):
+                    total_size += os.path.getsize(filepath)
+                    file_count += 1
+
+            cache_info["file_count"] = file_count
+            cache_info["total_size_mb"] = round(total_size / 1024 / 1024, 2)
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": "Cache cleaned successfully",
+                "cache_info": cache_info,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error cleaning cache: {e}")
+        return JSONResponse(
+            content={
+                "success": False,
+                "message": f"Error cleaning cache: {str(e)}",
+            },
+            status_code=500,
+        )
+
+
+@router.get("/vod/cache_info", dependencies=[Depends(allow_any_authenticated())])
+async def get_cloud_vod_cache_info(request: Request):
+    """获取云存储 VOD 缓存信息"""
+    cache_info = {
+        "cache_dir": CLOUD_VOD_CACHE_DIR,
+        "exists": os.path.exists(CLOUD_VOD_CACHE_DIR),
+        "max_size_mb": CLOUD_VOD_CACHE_MAX_SIZE_MB,
+        "max_age_hours": CLOUD_VOD_CACHE_MAX_AGE_HOURS,
+    }
+
+    if cache_info["exists"]:
+        total_size = 0
+        file_count = 0
+        oldest_age_hours = 0
+        current_time = time.time()
+
+        for filename in os.listdir(CLOUD_VOD_CACHE_DIR):
+            filepath = os.path.join(CLOUD_VOD_CACHE_DIR, filename)
+            if os.path.isfile(filepath):
+                stat = os.stat(filepath)
+                total_size += stat.st_size
+                file_count += 1
+                age_hours = (current_time - stat.st_atime) / 3600
+                if age_hours > oldest_age_hours:
+                    oldest_age_hours = age_hours
+
+        cache_info["file_count"] = file_count
+        cache_info["total_size_mb"] = round(total_size / 1024 / 1024, 2)
+        cache_info["oldest_file_age_hours"] = round(oldest_age_hours, 2)
+
+    return JSONResponse(content=cache_info)
 
 
 ####################### dynamic routes ###########################

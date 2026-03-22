@@ -80,8 +80,8 @@ class Recordings(Model):
     regions = IntegerField(null=True)
     # Cloud upload related fields
     cloud_upload_status = CharField(default="pending", max_length=20, index=True)
-    cloud_fid = CharField(null=True, max_length=64)  # Cloud file ID
-    cloud_dir_id = CharField(null=True, max_length=64)  # Cloud directory ID
+    cloud_fid = CharField(null=True, max_length=128)  # Cloud file ID (increased from 64 to support longer fids)
+    cloud_dir_id = CharField(null=True, max_length=128)  # Cloud directory ID
     cloud_upload_error = TextField(null=True)  # Upload error message
 
 

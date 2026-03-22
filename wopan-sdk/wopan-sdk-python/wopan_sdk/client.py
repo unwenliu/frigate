@@ -119,7 +119,14 @@ class GetDownloadUrlData:
     """获取下载链接结果"""
 
     fid: str
-    download_url: str
+    download_url: str = ""
+
+    def __post_init__(self):
+        # 处理从 JSON 传入的 dict 情况（驼峰命名转蛇形命名）
+        if isinstance(self.fid, dict):
+            data = self.fid
+            self.fid = data.get("fid", "")
+            self.download_url = data.get("downloadUrl", "")
 
 
 @dataclass
@@ -128,6 +135,20 @@ class GetDownloadUrlV2Data:
 
     type: int
     list: list[GetDownloadUrlData]
+
+    def __post_init__(self):
+        # 将 list 中的 dict 转换为 GetDownloadUrlData 对象
+        if self.list:
+            converted_list = []
+            for item in self.list:
+                if isinstance(item, dict):
+                    converted_list.append(GetDownloadUrlData(
+                        fid=item.get("fid", ""),
+                        download_url=item.get("downloadUrl", "")
+                    ))
+                else:
+                    converted_list.append(item)
+            self.list = converted_list
 
 
 @dataclass

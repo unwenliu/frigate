@@ -24,7 +24,7 @@ import {
   ReviewSummary,
   ZoomLevel,
 } from "@/types/review";
-import { getChunkedTimeDay } from "@/utils/timelineUtil";
+import { getChunkedTime15Min } from "@/utils/timelineUtil";
 import {
   MutableRefObject,
   useCallback,
@@ -159,7 +159,7 @@ export function RecordingView({
   );
 
   const chunkedTimeRange = useMemo(
-    () => getChunkedTimeDay(timeRange),
+    () => getChunkedTime15Min(timeRange),
     [timeRange],
   );
   const [selectedRangeIdx, setSelectedRangeIdx] = useState(

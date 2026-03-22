@@ -196,19 +196,10 @@ class FileSystemMixin:
         }
 
         try:
-            result = self.request_wo_home(KEY_GET_DOWNLOAD_URL_V2, param, JSON_SECRET)
+            result = self.request_wo_home(KEY_GET_DOWNLOAD_URL_V2, param, JSON_SECRET, GetDownloadUrlV2Data)
             if not result:
                 return GetDownloadUrlV2Data(type=1, list=[])
-
-            download_list = []
-            for item in result.get("list", []):
-                download_list.append(
-                    GetDownloadUrlData(
-                        fid=item.get("fid"), download_url=item.get("downloadUrl")
-                    )
-                )
-
-            return GetDownloadUrlV2Data(type=result.get("type", 1), list=download_list)
+            return result
 
         except Exception as e:
             raise WoPanFileException(f"Failed to get download URL: {str(e)}")
