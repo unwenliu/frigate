@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 # 云存储 VOD 缓存配置
 CLOUD_VOD_CACHE_DIR = os.path.join(CACHE_DIR, "cloud_vod")
-CLOUD_VOD_CACHE_MAX_SIZE_MB = 5000  # 最大缓存大小 5GB
+CLOUD_VOD_CACHE_MAX_SIZE_MB = 1000  # 最大缓存大小 1GB
 CLOUD_VOD_CACHE_MAX_AGE_HOURS = 24  # 缓存文件最大保留时间 24小时
 
 
@@ -2092,7 +2092,7 @@ async def clean_cloud_vod_cache(
     手动清理云存储 VOD 缓存
 
     Args:
-        max_size_mb: 最大缓存大小（MB），默认 5000MB
+        max_size_mb: 最大缓存大小（MB），默认 1000MB
         max_age_hours: 文件最大保留时间（小时），默认 24小时
     """
     try:
